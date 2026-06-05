@@ -1,0 +1,13 @@
+#CRC Codes for initially generated config files -- do not modify!
+SEGGER_RTT_Conf.h=1147949881
+btl_core_cfg.h=-1708245015
+btl_debug_cfg.h=-555597884
+btl_storage_cfg.h=-1485522919
+btl_storage_cfg_default.h=-1270600582
+btl_storage_slot_cfg.h=-888457343
+btl_storage_slot_cfg_default.h=1689416951
+sl_clock_manager_oscillator_config.h=-1270680359
+sl_clock_manager_tree_config.h=154344211
+sl_core_config.h=-2018153270
+sl_memory_manager_region_config.h=990835082
+sli_ksu_keyslots_config.h=150454345

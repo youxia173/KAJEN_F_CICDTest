@@ -1,0 +1,713 @@
+# TERMS OF USE - SILICON LABORATORIES INC.
+# (With respect to Silicon Labs software components, this Software Bill of Materials (SBOM) is based upon Silicon Labs'
+# review and analysis of the code version when released.  It is provided "AS IS" and does not modify, change or alter
+# the terms or conditions of your use of Silicon Labs' software and/or SDKs based upon license terms and/or agreements
+# associated with this software or SDKs when distributed to you, received by you, or installed by you.  Further, no
+# warranties or obligations are created by this SBOM.  It is your obligation to comply with the terms of licenses
+# referenced in this SBOM.)
+SPDXVersion: SPDX-2.3
+DataLicense: CC0-1.0
+SPDXID: SPDXRef-DOCUMENT
+DocumentName: Silicon-Laboratories
+DocumentNamespace: https://silabs.com
+
+## Creation Information
+Creator: Organization: Silicon Laboratories, Inc.
+Created: 2026-03-27T02:29:09Z
+## Relationships
+Relationship: SPDXRef-DOCUMENT DESCRIBES SPDXRef-silabs.simplicity_sdk-2025.12.1
+Relationship: SPDXRef-DOCUMENT DESCRIBES SPDXRef-silabs.matter-2.8.0
+
+## Package Information
+PackageName: Simplicity SDK Suite
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-SIMG301M113WIH
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-bootloader_aes_sha_ecdsa
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-bootloader_compression_lzma
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-bootloader_debug
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-bootloader_gbl_compression_lz4
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_common_storage
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_core
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_crc
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_image_parser
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_internal_storage
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_storage_slots
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-clock_manager
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-axip_region1_enable
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-axip_region0_enable
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-device_clock_hal
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-sli_crypto_ksu_manager
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-sl_assert
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-clock_manager_init_hal_s3
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-device_clock
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-component_catalog
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-se_manager
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-hal_gpio
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-hal_ldma
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-clock_manager_runtime_hal_s3
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-device_gpio
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-trustzone_unaware
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-sxsymcrypt
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-hal_common
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-common_token_manager_static_bootloader
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_include_parser
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-sl_core
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-bootloader_aes_sha_ecdsa_s3
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-hal_timer
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-se_manager_device_data
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-se_manager_crypto
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-hal_syscfg
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-cmsis_core
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-interrupt_manager
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-enum
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-interrupt_manager_cortexm
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-interrupt_manager_vector_table_in_ram
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-se_manager_extmem
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-clock_manager_runtime
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-hal_system
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-sli_psec_osal
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-code_classification
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-sl_common
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-se_manager_mailbox
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-se_manager_config
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-tz_secure_execution
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-status
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1 CONTAINS SPDXRef-silabs.simplicity_sdk-2025.12.1-gpio
+
+## Package Information
+PackageName: SIMG301M113WIH
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-SIMG301M113WIH
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-SIMG301M113WIH CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Crypto
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-bootloader_aes_sha_ecdsa
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: MSLA AND APACHE-2.0
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-bootloader_aes_sha_ecdsa CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: GBL Compression (LZMA)
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-bootloader_compression_lzma
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: MSLA
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-bootloader_compression_lzma CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Debug
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-bootloader_debug
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: MSLA
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-bootloader_debug CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: GBL Compression (LZ4)
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-bootloader_gbl_compression_lz4
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: MSLA
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-bootloader_gbl_compression_lz4 CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Common storage (Series-3)
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_common_storage
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: MSLA
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_common_storage CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Bootloader Core (Series-3)
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_core
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: MSLA
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_core CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Cyclic Redundancy Check (Series-3)
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_crc
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: MSLA
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_crc CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Image Parser (Series-3)
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_image_parser
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: MSLA
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_image_parser CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Internal Storage (Series-3)
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_internal_storage
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: MSLA
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_internal_storage CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Bootloader Storage Slot Setup (Series-3)
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_storage_slots
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: MSLA
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_storage_slots CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Clock Manager
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-clock_manager
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-clock_manager CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Enable Encryption and Authentication (AXiP) for Code Region 1
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-axip_region1_enable
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-axip_region1_enable CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Enable Encryption and Authentication (AXiP) for Code Region 0
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-axip_region0_enable
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-axip_region0_enable CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Device Manager Clock HAL
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-device_clock_hal
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-device_clock_hal CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: KSU Manager
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-sli_crypto_ksu_manager
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-sli_crypto_ksu_manager CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Assert Functions
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-sl_assert
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-sl_assert CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Clock Manager Init HAL Series 3
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-clock_manager_init_hal_s3
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-clock_manager_init_hal_s3 CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Device Manager Clock
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-device_clock
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-device_clock CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Component Catalog
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-component_catalog
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-component_catalog CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: SE Manager
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-se_manager
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-se_manager CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: GPIO
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-hal_gpio
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-hal_gpio CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: LDMA
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-hal_ldma
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-hal_ldma CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Clock Manager Runtime HAL Series 3
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-clock_manager_runtime_hal_s3
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-clock_manager_runtime_hal_s3 CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Device Manager GPIO
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-device_gpio
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-device_gpio CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: TrustZone Unaware
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-trustzone_unaware
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-trustzone_unaware CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: SxSymCrypt Library
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-sxsymcrypt
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib AND BSD-3-Clause AND LicenseRef-SecureIC
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-sxsymcrypt CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-sxsymcrypt ANCESTOR_OF SPDXRef-sxsymcrypt-v4.11
+
+## Package Information
+PackageName: Secure-IC Symmetric Crypto Offload C Library
+SPDXID: SPDXRef-sxsymcrypt-v4.11
+PackageVersion: v4.11
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Secure-IC
+PackageOriginator: Organization: NOASSERTION
+PackageComment: <text>Software for symmetric cryptography offload to Secure-IC hardware.</text>
+## Relationships
+Relationship: SPDXRef-sxsymcrypt-v4.11 DESCENDANT_OF SPDXRef-silabs.simplicity_sdk-2025.12.1-sxsymcrypt
+
+## Package Information
+PackageName: Common Headers
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-hal_common
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-hal_common CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Common Token Manager - Static Tokens - Bootloader
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-common_token_manager_static_bootloader
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-common_token_manager_static_bootloader CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Bootloader Include Parser (Series-3)
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_include_parser
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: MSLA
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-btl_include_parser CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: core
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-sl_core
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-sl_core CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Crypto
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-bootloader_aes_sha_ecdsa_s3
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: MSLA AND APACHE-2.0
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-bootloader_aes_sha_ecdsa_s3 CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: TIMER
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-hal_timer
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-hal_timer CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Device Data
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-se_manager_device_data
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-se_manager_device_data CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Crypto
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-se_manager_crypto
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-se_manager_crypto CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: SYSCFG
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-hal_syscfg
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-hal_syscfg CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: CMSIS-Core
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-cmsis_core
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Apache 2.0
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-cmsis_core CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-cmsis_core ANCESTOR_OF SPDXRef-cmsis_core-5.8.0
+
+## Package Information
+PackageName: CMSIS_5
+SPDXID: SPDXRef-cmsis_core-5.8.0
+PackageVersion: 5.8.0
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: ARM-software
+PackageOriginator: Organization: NOASSERTION
+PackageHomePage: https://github.com/ARM-software/CMSIS_5
+ExternalRef: PACKAGE-MANAGER purl pkg:github/ARM-software/CMSIS_5@5.8.0
+PackageComment: <text>The CMSIS is a set of tools, APIs, frameworks, and work flows</text>
+## Relationships
+Relationship: SPDXRef-cmsis_core-5.8.0 DESCENDANT_OF SPDXRef-silabs.simplicity_sdk-2025.12.1-cmsis_core
+
+## Package Information
+PackageName: Interrupt Manager
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-interrupt_manager
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-interrupt_manager CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Enumerations
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-enum
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-enum CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Interrupt Manager Cortex-M
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-interrupt_manager_cortexm
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-interrupt_manager_cortexm CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Interrupt Manager: Interrupt Vector Table in RAM
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-interrupt_manager_vector_table_in_ram
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-interrupt_manager_vector_table_in_ram CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: External Memory
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-se_manager_extmem
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-se_manager_extmem CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Clock Manager Runtime
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-clock_manager_runtime
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-clock_manager_runtime CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: SYSTEM
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-hal_system
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-hal_system CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: OS Abstraction Layer
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-sli_psec_osal
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-sli_psec_osal CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Code Classification
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-code_classification
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-code_classification CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Common Functions
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-sl_common
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-sl_common CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: SE mailbox utilities
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-se_manager_mailbox
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-se_manager_mailbox CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Config
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-se_manager_config
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-se_manager_config CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: TrustZone Secure Execution
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-tz_secure_execution
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-tz_secure_execution CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Status Codes Definitions
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-status
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-status CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: GPIO Driver
+SPDXID: SPDXRef-silabs.simplicity_sdk-2025.12.1-gpio
+PackageVersion: 2025.12.1
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories, Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.simplicity_sdk-2025.12.1-gpio CONTAINED_BY SPDXRef-silabs.simplicity_sdk-2025.12.1
+
+## Package Information
+PackageName: Silicon Labs Matter
+SPDXID: SPDXRef-silabs.matter-2.8.0
+PackageVersion: 2.8.0
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories Inc.
+## Relationships
+Relationship: SPDXRef-silabs.matter-2.8.0 CONTAINS SPDXRef-silabs.matter-2.8.0-matter_log_rtt
+Relationship: SPDXRef-silabs.matter-2.8.0 CONTAINS SPDXRef-silabs.matter-2.8.0-matter_segger_rtt
+
+## Package Information
+PackageName: Logging to RTT
+SPDXID: SPDXRef-silabs.matter-2.8.0-matter_log_rtt
+PackageVersion: 2.8.0
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories Inc.
+PackageLicenseConcluded: Zlib
+## Relationships
+Relationship: SPDXRef-silabs.matter-2.8.0-matter_log_rtt CONTAINED_BY SPDXRef-silabs.matter-2.8.0
+
+## Package Information
+PackageName: Matter Segger RTT
+SPDXID: SPDXRef-silabs.matter-2.8.0-matter_segger_rtt
+PackageVersion: 2.8.0
+PrimaryPackagePurpose: LIBRARY
+PackageDownloadLocation: NOASSERTION
+PackageSupplier: Organization: Silicon Laboratories Inc.
+PackageLicenseConcluded: Segger
+## Relationships
+Relationship: SPDXRef-silabs.matter-2.8.0-matter_segger_rtt CONTAINED_BY SPDXRef-silabs.matter-2.8.0

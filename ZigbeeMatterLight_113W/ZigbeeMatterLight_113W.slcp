@@ -1,0 +1,468 @@
+# Silicon Labs Project Configuration Tools: slcp, v0, Component selection file.
+project_name: ZigbeeMatterLight_113W
+label: ZigbeeMatterLight_113W
+description: This is the project file for a Matter (OT)+Zigbee+BLE app
+category: Matter Zigbee Application
+package: matter
+quality: production
+readme:
+- path: README.md
+source:
+- path: src/AppTask.cpp
+- path: src/LightingManager.cpp
+- path: src/main.cpp
+- path: src/DataModelCallbacks.cpp
+tag:
+- hardware:device:flash:1536
+- prebuilt_demo
+- hardware:device:ram:192
+include:
+- path: include
+  file_list:
+  - path: AppConfig.h
+  - path: AppEvent.h
+  - path: AppTask.h
+  - path: CHIPProjectConfig.h
+  - path: LightingManager.h
+  - path: ZigbeeCMPConfig.h
+  - path: ZigbeeSequentialConfig.h
+sdk:
+  vendor: silabs
+  id: simplicity_sdk
+  version: 2025.12.1
+toolchain_settings:
+- value: gnu++17
+  option: cxx_standard
+component:
+- package: matter
+  vendor: silabs
+  id: app_common
+- package: matter
+  vendor: silabs
+  id: matter
+- package: matter
+  vendor: silabs
+  id: matter_access_control
+- package: matter
+  vendor: silabs
+  id: matter_administrator_commissioning
+- package: matter
+  vendor: silabs
+  id: matter_basic_information
+- package: matter
+  vendor: silabs
+  id: matter_ble
+- package: matter
+  vendor: silabs
+  id: matter_ble_side_channel
+- package: matter
+  vendor: silabs
+  id: matter_buttons
+- package: matter
+  vendor: silabs
+  id: matter_color_control
+- package: matter
+  vendor: silabs
+  id: matter_configuration_over_swo
+- package: matter
+  vendor: silabs
+  id: matter_crypto
+- package: matter
+  vendor: silabs
+  id: matter_descriptor
+- package: matter
+  vendor: silabs
+  id: matter_fixed_label
+- package: matter
+  vendor: silabs
+  id: matter_general_commissioning
+- package: matter
+  vendor: silabs
+  id: matter_general_diagnostics
+- package: matter
+  vendor: silabs
+  id: matter_group_key_mgmt
+- package: matter
+  vendor: silabs
+  id: matter_groups
+- package: matter
+  vendor: silabs
+  id: matter_identify
+- package: matter
+  vendor: silabs
+  id: matter_leds
+- package: matter
+  vendor: silabs
+  id: matter_level_control
+- package: matter
+  vendor: silabs
+  id: matter_lighting
+- package: matter
+  vendor: silabs
+  id: matter_localization_configuration
+- package: matter
+  vendor: silabs
+  id: matter_log_rtt
+- package: matter
+  vendor: silabs
+  id: matter_network_commissioning
+- package: matter
+  vendor: silabs
+  id: matter_on_off
+- package: matter
+  vendor: silabs
+  id: matter_operational_credentials
+- package: matter
+  vendor: silabs
+  id: matter_ota_requestor
+- package: matter
+  vendor: silabs
+  id: matter_ota_support
+- package: matter
+  vendor: silabs
+  id: matter_platform_mg
+- package: matter
+  vendor: silabs
+  id: matter_power_source
+- package: matter
+  vendor: silabs
+  id: matter_provision_default
+- package: matter
+  vendor: silabs
+  id: matter_rgb_leds
+- package: matter
+  vendor: silabs
+  id: matter_scenes
+- package: matter
+  vendor: silabs
+  id: matter_segger_rtt
+- package: matter
+  vendor: silabs
+  id: matter_shell
+- package: matter
+  vendor: silabs
+  id: matter_software_diagnostics
+- package: matter
+  vendor: silabs
+  id: matter_thread
+- package: matter
+  vendor: silabs
+  id: matter_thread_network_diagnostics
+- package: matter
+  vendor: silabs
+  id: matter_unit_localization
+- package: matter
+  vendor: silabs
+  id: matter_user_label
+- package: matter
+  vendor: silabs
+  id: matter_zigbee_multiprotocol_common
+- package: simplicity_sdk
+  vendor: silabs
+  id: SIMG301M113WIH
+- package: simplicity_sdk
+  vendor: silabs
+  id: bluetooth_feature_connection
+- package: simplicity_sdk
+  vendor: silabs
+  id: bluetooth_feature_connection_role_peripheral
+- package: simplicity_sdk
+  vendor: silabs
+  id: bluetooth_feature_gatt
+- package: simplicity_sdk
+  vendor: silabs
+  id: bluetooth_feature_gatt_server
+- package: simplicity_sdk
+  vendor: silabs
+  id: bluetooth_feature_legacy_advertiser
+- package: simplicity_sdk
+  vendor: silabs
+  id: bluetooth_feature_sm
+- package: simplicity_sdk
+  vendor: silabs
+  id: bluetooth_feature_system
+- package: simplicity_sdk
+  vendor: silabs
+  id: bluetooth_stack
+- package: simplicity_sdk
+  instance:
+  - example
+  vendor: silabs
+  id: cli
+- package: simplicity_sdk
+  vendor: silabs
+  id: clock_manager
+- package: simplicity_sdk
+  vendor: silabs
+  id: device_init
+- package: simplicity_sdk
+  vendor: silabs
+  id: iostream_stdio
+- package: simplicity_sdk
+  instance:
+  - rgb_white
+  vendor: silabs
+  id: pwm
+- package: simplicity_sdk
+  vendor: silabs
+  id: rail_mux
+- package: simplicity_sdk
+  instance:
+  - btn1
+  vendor: silabs
+  id: simple_button
+- package: simplicity_sdk
+  instance:
+  - rgb_led0
+  vendor: silabs
+  id: simple_rgb_pwm_led
+- package: simplicity_sdk
+  vendor: silabs
+  id: sl_main
+- package: simplicity_sdk
+  instance:
+  - SPI_SM15135E
+  vendor: silabs
+  id: spidrv_eusart
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_address_table
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_application_bootloader
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_basic
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_ble_dmp_cli
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_color_control_server
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_core_cli
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_counters
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_debug_print
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_find_and_bind_target
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_gp
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_green_power_client
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_green_power_client_cli
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_green_power_common
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_groups_server
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_identify
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_interpan
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_ipc
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_level_control
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_network_creator
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_network_creator_security
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_network_steering
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_on_off
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_pro_stack
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_reporting
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_scan_dispatch
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_scenes
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_security_link_keys
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_source_route
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_stack_diagnostics
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_update_tc_link_key
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_zcl_cli
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_zcl_framework_core
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_zll
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_zll_commissioning_common
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_zll_commissioning_server
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_zll_identify_server
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_zll_level_control_server
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_zll_on_off_server
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_zll_scenes_server
+- package: simplicity_sdk
+  vendor: silabs
+  id: zigbee_zll_utility_server
+other_file:
+- path: target_behaviour.png
+define:
+- name: OS_CFG_COMPAT_INIT
+- name: CHIP_CRYPTO_PLATFORM
+  value: '1'
+- name: _WANT_REENT_SMALL
+  value: '1'
+- name: IS_DEMO_LIGHT
+  value: '1'
+- name: NVM3_DEFAULT_NVM_SIZE
+  value: '40960'
+- name: NVM3_DEFAULT_MAX_OBJECT_SIZE
+  value: '4092'
+- name: SL_CLI_TICK_ENABLE
+  value: '0'
+config_file:
+- path: config/sl_cmp_config.h
+- path: config/common/zcl_config.zap
+  directory: common
+- path: config/provision/provision.mattpconf
+  directory: provision
+requires:
+- name: matter_drivers_series_2
+configuration:
+- name: SL_TOKEN_MANAGER_STATIC_SECURE_TOKEN_SIZE
+  value: '8192'
+- name: SL_BOARD_ENABLE_VCOM
+  value: '1'
+- condition:
+  - iostream_eusart
+  name: SL_IOSTREAM_EUSART_VCOM_FLOW_CONTROL_TYPE
+  value: eusartHwFlowControlCtsAndRts
+- name: SL_CLI_MAX_INPUT_ARGUMENTS
+  value: '16'
+- name: SLI_ZIGBEE_PRIMARY_NETWORK_DEVICE_TYPE
+  value: SLI_ZIGBEE_NETWORK_DEVICE_TYPE_COORDINATOR_OR_ROUTER
+- name: SLI_ZIGBEE_PRIMARY_NETWORK_SECURITY_TYPE
+  value: SLI_ZIGBEE_NETWORK_SECURITY_TYPE_3_0
+- condition:
+  - iostream_usart
+  name: SL_IOSTREAM_USART_VCOM_RESTRICT_ENERGY_MODE_TO_ALLOW_RECEPTION
+  value: '1'
+- condition:
+  - matter_ble_side_channel
+  unless:
+  - matter_ble_dmp_test
+  name: SL_BT_CONFIG_USER_ADVERTISERS
+  value: '2'
+- condition:
+  - matter_ble_dmp_test
+  name: SL_BT_CONFIG_USER_ADVERTISERS
+  value: '3'
+- name: SL_BT_CONFIG_MAX_CONNECTIONS
+  value: '4'
+- condition:
+  - iostream_eusart
+  name: SL_IOSTREAM_EUSART_VCOM_RX_BUFFER_SIZE
+  value: '128'
+- condition:
+  - freertos
+  name: SL_HEAP_SIZE
+  value: '40960'
+- condition:
+  - freertos
+  name: SL_STACK_SIZE
+  value: '5120'
+- name: LIB_MEM_CFG_HEAP_SIZE
+  value: '0'
+- condition:
+  - iostream_eusart
+  name: SL_IOSTREAM_EUSART_VCOM_RESTRICT_ENERGY_MODE_TO_ALLOW_RECEPTION
+  value: '1'
+- name: SL_OPENTHREAD_RTOS_TASK_PRIORITY
+  value: '49'
+- name: SL_CLI_HELP_DESCRIPTION_ENABLED
+  value: '0'
+- name: SL_CLI_EOL_STRING
+  value: '"\r\n"'
+- name: SL_LEGACY_HAL_DISABLE_WATCHDOG
+  value: '1'
+- name: SL_BT_RTOS_EVENT_HANDLER_STACK_SIZE
+  value: '1536'
+- condition:
+  - device_series_2
+  name: SL_BT_RTOS_LINK_LAYER_TASK_STACK_SIZE
+  value: '1088'
+- name: CIRCULAR_QUEUE_LEN_MAX
+  value: '16'
+- name: SL_MBEDTLS_PSA_ASSUME_EXCLUSIVE_BUFFERS
+  value: '1'
+- condition:
+  - ot_coap_cert_libs
+  name: SL_MBEDTLS_KEY_EXCHANGE_PSK_ENABLED
+  value: '1'
+- condition:
+  - device_series_3
+  name: SL_CLI_EXAMPLE_TASK_STACK_SIZE
+  value: '1500'
+- condition:
+  - device_series_3
+  name: SL_ZIGBEE_STACK_RTOS_TASK_STACK_SIZE
+  value: '5800'
+- condition:
+  - device_series_3
+  name: SL_ZIGBEE_APP_FRAMEWORK_RTOS_TASK_STACK_SIZE
+  value: '6000'
+- condition:
+  - device_series_2
+  name: SL_CLI_EXAMPLE_TASK_STACK_SIZE
+  value: '600'
+ui_hints:
+  highlight:
+  - path: readme.md
+sdk_extension:
+- vendor: silabs
+  id: matter
+  version: 2.8.0
+post_build:
+- path: ZigbeeMatterLight_113W.slpb
+  profile: application
+

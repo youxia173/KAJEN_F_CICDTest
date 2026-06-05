@@ -1,0 +1,17 @@
+---
+workspace_name: "ZigbeeMatterLightSolution_SixG301M113W"
+label: "zigbee-matter-light-series-3"
+quality: "production"
+package: "matter"
+description: "Matter solution containing both a Matter bootloader and a Matter over\
+  \ Thread Light Zigbee Matter Example"
+project:
+- id: "application"
+  path: "ZigbeeMatterLight_113W/ZigbeeMatterLight_113W.slcp"
+  output: "ZigbeeMatterLight_113W"
+- id: "bootloader"
+  path: "Matter-Bootloader_113W/Matter-Bootloader_113W.slcp"
+  output: "Matter-Bootloader_113W"
+post_build:
+  profile: ""
+  path: "ZigbeeMatterLightSolution_SixG301M113W.slpb"

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="ASCII"?>
+<model:MDescriptors xmlns:model="http://www.silabs.com/ss/Studio.ecore">
+  <descriptors name="ZigbeeMatterLight_113W">
+    <properties key="projectCommon.sdkId" value="com.silabs.sdk.stack.sisdk:2025.12.1._-1912449365-563987569"/>
+    <properties key="universalConfig.relativeWorkspacePath" value="../../ZigbeeMatterLightSolution_SixG301M113W.slcw"/>
+    <properties key="universalConfig.generationDirectory" value=""/>
+    <properties key="universalConfig.toolchainCompatibility" value="iar llvm gcc"/>
+    <properties key="projectCommon.overwriteCopiedSources" value="false"/>
+    <properties key="projectCommon.boardIds" value="com.silabs.board.none:0.0.0"/>
+    <properties key="projectCommon.kitId" value=""/>
+    <properties key="projectCommon.partId" value="mcu.arm.si.mg301.simg301m113wih"/>
+    <properties key="universalConfig.projectTypeIds" value="visual-studio-code"/>
+    <properties key="projectCommon.importModeId" value="COPY"/>
+    <properties key="universalConfig.compSelProjInstanceId" value="1774328571474"/>
+  </descriptors>
+</model:MDescriptors>

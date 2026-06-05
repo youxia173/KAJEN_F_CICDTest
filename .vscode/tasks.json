@@ -1,0 +1,29 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "setup ZigbeeMatterLight_113W",
+			"type": "shell",
+			"command": "cmake --preset project",
+			"options": {
+				"cwd": "${workspaceFolder}/ZigbeeMatterLightSolution_SixG301M113W_cmake"
+			}
+		},
+		{
+			"label": "build ZigbeeMatterLight_113W",
+			"type": "shell",
+			"command": "cmake --build --preset default_config",
+			"options": {
+				"cwd": "${workspaceFolder}/ZigbeeMatterLightSolution_SixG301M113W_cmake"
+			}
+		},
+		{
+			"label": "setup+build ZigbeeMatterLight_113W",
+			"dependsOrder": "sequence",
+			"dependsOn": [
+				"setup ZigbeeMatterLight_113W",
+				"build ZigbeeMatterLight_113W"
+			]
+		}
+	]
+}

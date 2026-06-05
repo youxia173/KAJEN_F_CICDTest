@@ -1,0 +1,1 @@
+![](./ZigbeeMatterLight_113W/matter_2.8.1/third_party/matter_sdk/examples/platform/silabs/rgb_led/RGBLEDWidget.cpp)

@@ -1,0 +1,114 @@
+# Silicon Labs Project Configuration Tools: slcp, v0, Component selection file.
+project_name: Matter-Bootloader_113W
+label: Matter-Bootloader_113W
+description: "This sample configuration of the simplicity bootloader configures the\
+  \ bootloader to use the flash to store firmware update images. The storage configuration\
+  \ is set up to store a single firmware update image at a time, in a single storage\
+  \ slot. This project supports Matter OTA updates for 3MB, 4MB and 8MB variants of\
+  \ Series-3 boards. \n"
+package: matter
+quality: production
+readme:
+- path: readme.md
+sdk:
+  vendor: silabs
+  id: simplicity_sdk
+  version: 2025.12.1
+toolchain_settings: [
+  ]
+component:
+- package: matter
+  vendor: silabs
+  id: matter_log_rtt
+- package: matter
+  vendor: silabs
+  id: matter_segger_rtt
+- package: simplicity_sdk
+  vendor: silabs
+  id: SIMG301M113WIH
+- package: simplicity_sdk
+  vendor: silabs
+  id: bootloader_aes_sha_ecdsa
+- package: simplicity_sdk
+  vendor: silabs
+  id: bootloader_compression_lzma
+- package: simplicity_sdk
+  vendor: silabs
+  id: bootloader_debug
+- package: simplicity_sdk
+  vendor: silabs
+  id: bootloader_gbl_compression_lz4
+- package: simplicity_sdk
+  vendor: silabs
+  id: btl_common_storage
+- package: simplicity_sdk
+  vendor: silabs
+  id: btl_core
+- package: simplicity_sdk
+  vendor: silabs
+  id: btl_crc
+- package: simplicity_sdk
+  vendor: silabs
+  id: btl_image_parser
+- package: simplicity_sdk
+  vendor: silabs
+  id: btl_internal_storage
+- package: simplicity_sdk
+  vendor: silabs
+  id: btl_storage_slots
+- package: simplicity_sdk
+  vendor: silabs
+  id: clock_manager
+configuration:
+- name: SLOT0_ENABLE
+  value: '1'
+- condition:
+  - simg301m113wih
+  name: SLOT0_SIZE
+  value: '1208320'
+- condition:
+  - simg301m113wih
+  name: SLOT0_START
+  value: '18251776'
+- condition:
+  - simg301m113wih
+  name: BTL_STORAGE_BASE_ADDRESS
+  value: '18251776'
+- unless:
+  - simg301m113wih
+  - simg301m104xil_8mb
+  name: SLOT0_SIZE
+  value: '1576960'
+- unless:
+  - simg301m113wih
+  - simg301m104xil_8mb
+  name: SLOT0_START
+  value: '18841600'
+- unless:
+  - simg301m113wih
+  - simg301m104xil_8mb
+  name: BTL_STORAGE_BASE_ADDRESS
+  value: '18841600'
+- condition:
+  - simg301m104xil_8mb
+  name: SLOT0_SIZE
+  value: '2732032'
+- condition:
+  - simg301m104xil_8mb
+  name: SLOT0_START
+  value: '20414464'
+- condition:
+  - simg301m104xil_8mb
+  name: BTL_STORAGE_BASE_ADDRESS
+  value: '20414464'
+ui_hints:
+  highlight:
+  - path: readme.md
+sdk_extension:
+- vendor: silabs
+  id: matter
+  version: 2.8.0
+post_build:
+- path: Matter-Bootloader_113W.slpb
+  profile: bootloader_series_2
+

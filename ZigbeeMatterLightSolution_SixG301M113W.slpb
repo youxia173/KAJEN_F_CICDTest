@@ -1,0 +1,16 @@
+---
+parameters: []
+constants:
+- name: "workspace_name"
+  value: "ZigbeeMatterLightSolution_SixG301M113W"
+- path: "ZigbeeMatterLight_113W/ZigbeeMatterLight_113W.slpb"
+- path: "Matter-Bootloader_113W/Matter-Bootloader_113W.slpb"
+steps:
+- task: "convert"
+  output: "artifact/{{workspace_name}}-full.s37"
+  input:
+  - "{{bootloader_binary}}"
+  - "{{application_binary}}"
+- task: "create_gbl"
+  output: "artifact/{{workspace_name}}-app-only.gbl"
+  app: "{{application_binary}}"

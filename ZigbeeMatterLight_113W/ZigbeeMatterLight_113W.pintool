@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="ASCII"?>
+<device:XMLDevice xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:device="http://www.silabs.com/ss/hwconfig/document/device.ecore" name="pin_tool.SiMG301M113WIH" partId="mcu.arm.si.mg301.simg301m113wih" contextId="com.silabs.sdk.stack.sisdk:2025.12.1._-1912449365-563987569">
+  <mode name="DefaultMode">
+    <property object="DefaultMode" propertyId="mode.diagramLocation" value="100, 100"/>
+    <property object="EUSART0" propertyId="ABModule.selectedRequirement" value="eusart%T%SL_UARTDRV_EUSART_VCOM%T%sl_uartdrv_eusart_vcom_config.h"/>
+    <property object="EUSART0" propertyId="ABPeripheral.included" value="true"/>
+    <property object="EUSART1" propertyId="ABModule.selectedRequirement" value="eusart%T%SL_SPIDRV_EUSART_SPI_SM15135E%T%sl_spidrv_eusart_SPI_SM15135E_config.h"/>
+    <property object="EUSART1" propertyId="ABPeripheral.included" value="true"/>
+    <property object="PC00" propertyId="ABModule.selectedRequirement" value="gpio%T%SL_SIMPLE_LED_INST0%T%sl_simple_led_inst0_config.h"/>
+    <property object="PC00" propertyId="pin.reserve" value="Reserved"/>
+    <property object="PD02" propertyId="ABModule.selectedRequirement" value="gpio%T%SL_SIMPLE_BUTTON_BTN1%T%sl_simple_button_btn1_config.h"/>
+    <property object="PD02" propertyId="pin.reserve" value="Reserved"/>
+    <property object="PORTIO" propertyId="portio.eusart0.enable.rx" value="Enabled"/>
+    <property object="PORTIO" propertyId="portio.eusart0.enable.tx" value="Enabled"/>
+    <property object="PORTIO" propertyId="portio.eusart0.location.tx" value="18"/>
+    <property object="PORTIO" propertyId="portio.eusart1.enable.rx" value="Enabled"/>
+    <property object="PORTIO" propertyId="portio.eusart1.enable.sclk" value="Enabled"/>
+    <property object="PORTIO" propertyId="portio.eusart1.enable.tx" value="Enabled"/>
+    <property object="PORTIO" propertyId="portio.eusart1.location.rx" value="34"/>
+    <property object="PORTIO" propertyId="portio.eusart1.location.sclk" value="33"/>
+    <property object="PORTIO" propertyId="portio.eusart1.location.tx" value="48"/>
+    <property object="PORTIO" propertyId="portio.timer0.enable.cc0" value="Enabled"/>
+    <property object="PORTIO" propertyId="portio.timer0.location.cc0" value="49"/>
+    <property object="PORTIO" propertyId="portio.timer2.enable.cc0" value="Enabled"/>
+    <property object="PORTIO" propertyId="portio.timer2.enable.cc1" value="Enabled"/>
+    <property object="PORTIO" propertyId="portio.timer2.enable.cc2" value="Enabled"/>
+    <property object="PORTIO" propertyId="portio.timer2.location.cc0" value="3"/>
+    <property object="PORTIO" propertyId="portio.timer2.location.cc1" value="4"/>
+    <property object="PORTIO" propertyId="portio.timer2.location.cc2" value="16"/>
+    <property object="PTI" propertyId="ABModule.selectedRequirement" value="pti%T%SL_RAIL_UTIL_PTI%T%sl_rail_util_pti_config.h"/>
+    <property object="PTI" propertyId="ABPeripheral.included" value="true"/>
+    <property object="TIMER0" propertyId="ABModule.selectedRequirement" value="timer%T%SL_PWM_RGB_WHITE%T%sl_pwm_init_rgb_white_config.h"/>
+    <property object="TIMER0" propertyId="ABPeripheral.included" value="true"/>
+    <property object="TIMER0" propertyId="channel.0.name" value="OUTPUT"/>
+    <property object="TIMER2" propertyId="ABModule.selectedRequirement" value="timer%T%SL_SIMPLE_RGB_PWM_LED_RGB_LED0%T%sl_simple_rgb_pwm_led_rgb_led0_config.h"/>
+    <property object="TIMER2" propertyId="ABPeripheral.included" value="true"/>
+    <property object="TIMER2" propertyId="channel.0.name" value="BLUE"/>
+    <property object="TIMER2" propertyId="channel.1.name" value="GREEN"/>
+    <property object="TIMER2" propertyId="channel.2.name" value="RED"/>
+  </mode>
+  <modeTransition>
+    <property object="RESET &#x2192; DefaultMode" propertyId="modeTransition.source" value="RESET"/>
+    <property object="RESET &#x2192; DefaultMode" propertyId="modeTransition.target" value="DefaultMode"/>
+  </modeTransition>
+</device:XMLDevice>
