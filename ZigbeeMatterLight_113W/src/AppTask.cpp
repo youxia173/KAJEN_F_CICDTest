@@ -187,6 +187,8 @@ bool sImmediateSinglePending = false;
 uint32_t sLongPressMs = 0;
 bool sResetWarnActive = false;
 bool sResetTriggered = false;
+bool sResetPendingAfterWarnEnd = false;
+bool sResetEndSequenceActive = false;
 bool sDimmingActive = false;
 int8_t sNextDimmingDirection = -1;
 int8_t sDimmingDirection = -1;
@@ -198,9 +200,9 @@ bool sButtonPresetLatched = false;
 bool sStartupSingleWhiteLock = true;
 bool sCommissioningActive = false;
 bool sBootBreathingActive = false;
+bool sPairSuccessPending = false;
 bool sIdentifyActive = false;
 AppTask::EffectMode sIdentifyResumeMode = AppTask::EffectMode::None;
-uint8_t sEffectStartWhite = 0;
 
 struct PreEffectState
 {
@@ -864,6 +866,90 @@ static void RestoreState(const PreEffectState & state)
     MatterSavePowerOnMemorySnapshot();
 }
 
+void AppTask::TriggerFactoryResetAfterLongPress()
+{
+    ApplyRgbwEffect(0, 0, 0, 0);
+
+    gResetLastFaultSignature = kLongPressResetSignature;
+    gResetLastFaultValue     = 10;
+
+    uint8_t mark = 1;
+    CHIP_ERROR markErr = chip::DeviceLayer::PersistedStorage::KeyValueStoreMgr().Put(kFactoryResetBootKey, &mark, sizeof(mark));
+    if (markErr != CHIP_NO_ERROR)
+    {
+        ChipLogError(Zcl, "[DIM] failed to store reset boot marker: %" CHIP_ERROR_FORMAT, markErr.Format());
+    }
+    ChipLogError(Zcl, "[DIM] long press 10s reset triggered");
+    chip::Server::GetInstance().ScheduleFactoryReset();
+}
+
+void AppTask::StartResetWarnEndEffect(bool pendingFactoryReset)
+{
+    sResetPendingAfterWarnEnd = pendingFactoryReset;
+    sResetEndSequenceActive = true;
+    sDimmingActive = false;
+    osTimerStop(sLongPressTimer);
+    StartEffect(EffectMode::ResetWarnEnd);
+    ChipLogError(Zcl, "[DIM] reset warn end slow blink (reset=%u)", pendingFactoryReset ? 1u : 0u);
+}
+
+void AppTask::CancelResetWarningSequence()
+{
+    sResetPendingAfterWarnEnd = false;
+    sResetEndSequenceActive = false;
+    sResetTriggered = false;
+    sResetWarnActive = false;
+    sDimmingActive = false;
+    osTimerStop(sLongPressTimer);
+    StopEffect();
+    RestoreState(sPreEffectState);
+    sLongPressMs = 0;
+    ChipLogError(Zcl, "[DIM] reset warning sequence cancelled");
+}
+
+void AppTask::FinishResetWarnEndEffect()
+{
+    const bool pendingReset = sResetPendingAfterWarnEnd;
+    sResetPendingAfterWarnEnd = false;
+    sResetEndSequenceActive = false;
+    sResetWarnActive = false;
+    StopEffect();
+    ApplyRgbwEffect(0, 0, 0, 0);
+
+    if (pendingReset)
+    {
+        TriggerFactoryResetAfterLongPress();
+        return;
+    }
+
+    RestoreState(sPreEffectState);
+    sLongPressMs = 0;
+    ChipLogError(Zcl, "[DIM] long press interrupted between 5s and 10s");
+}
+
+void AppTask::BeginPairSuccessEffect()
+{
+    sPairSuccessPending = false;
+    sBootBreathingActive = false;
+    osTimerStop(sBootDefaultTimer);
+    MatterApplyRgbwNow(0u, 0u, 0u, 0u);
+    StartEffect(EffectMode::PairSuccess);
+    ChipLogError(Zcl, "[DIM] pairing success white blink start");
+}
+
+void AppTask::FinishPairSuccessEffect()
+{
+    StopEffect();
+    sStartupSingleWhiteLock = false;
+    MatterApplyRgbwNow(0u, 0u, 0u, 0u);
+    MatterSetOffTransitionActive(1);
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    OnOff::Attributes::OnOff::Set(LIGHT_ENDPOINT, false);
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+    MatterSetOffTransitionActive(0);
+    ChipLogError(Zcl, "[DIM] pairing success effect finished");
+}
+
 void AppTask::StartEffect(EffectMode mode)
 {
     if (ShouldSkipEffect(mode))
@@ -876,12 +962,6 @@ void AppTask::StartEffect(EffectMode mode)
     sEffectMode = mode;
     sEffectTickMs = 0;
     ChipLogError(AppServer, "[IDENTIFY] StartEffect mode=%u", static_cast<unsigned>(mode));
-    if (mode == EffectMode::PairSuccess)
-    {
-        uint8_t r = 0, g = 0, b = 0, w = 0;
-        MatterGetCurrentOutputRgbw(&r, &g, &b, &w);
-        sEffectStartWhite = w;
-    }
     osTimerStart(sEffectTimer, pdMS_TO_TICKS(APP_EFFECT_TICK_MS));
 }
 
@@ -933,6 +1013,14 @@ void AppTask::RunEffectStep()
                          static_cast<unsigned>(whitePermille), static_cast<unsigned>(sBootBreathDutyRemainder));
         }
         ApplyWhitePwmEffectPermille(whitePermille);
+
+        const uint32_t offHoldStart = rampMs + holdMs + rampMs;
+        if (sPairSuccessPending && t >= offHoldStart && whitePermille == 0u)
+        {
+            BeginPairSuccessEffect();
+            return;
+        }
+
         sEffectTickMs += APP_EFFECT_TICK_MS;
         return;
     }
@@ -946,49 +1034,47 @@ void AppTask::RunEffectStep()
         return;
     }
 
+    if (sEffectMode == EffectMode::ResetWarnEnd)
+    {
+        const uint32_t offMs = APP_RESET_WARN_END_OFF_MS;
+        const uint32_t onMs = APP_RESET_WARN_END_ON_MS;
+        const uint32_t endMs = offMs + onMs;
+
+        if (sEffectTickMs < offMs)
+        {
+            ApplyRgbwEffect(0u, 0u, 0u, 0u);
+        }
+        else if (sEffectTickMs < endMs)
+        {
+            ApplyRgbwEffect(255u, 0u, 0u, 0u);
+        }
+        else
+        {
+            FinishResetWarnEndEffect();
+            return;
+        }
+
+        sEffectTickMs += APP_EFFECT_TICK_MS;
+        return;
+    }
+
     if (sEffectMode == EffectMode::PairSuccess)
     {
-        const uint32_t fadeMs = APP_PAIR_SUCCESS_FADEOUT_MS;
         const uint32_t blinkOn = APP_PAIR_SUCCESS_BLINK_ON_MS;
         const uint32_t blinkOff = APP_PAIR_SUCCESS_BLINK_OFF_MS;
         const uint32_t blinkUnit = blinkOn + blinkOff;
         const uint32_t totalBlinkMs = blinkUnit * 2u;
 
-        if (sEffectTickMs < fadeMs)
+        if (sEffectTickMs < totalBlinkMs)
         {
-            const uint8_t out = static_cast<uint8_t>((static_cast<uint32_t>(sEffectStartWhite) * (fadeMs - sEffectTickMs)) / fadeMs);
-            ApplyWhiteEffectLevel(out);
-            sEffectTickMs += APP_EFFECT_TICK_MS;
-            return;
-        }
-
-        const uint32_t blinkT = sEffectTickMs - fadeMs;
-        if (blinkT < totalBlinkMs)
-        {
-            const uint32_t phase = blinkT % blinkUnit;
+            const uint32_t phase = sEffectTickMs % blinkUnit;
             const bool on = phase < blinkOn;
             ApplyWhiteEffectLevel(on ? 100u : 0u);
             sEffectTickMs += APP_EFFECT_TICK_MS;
             return;
         }
 
-        StopEffect();
-        RestorePreEffectState();
-        // Ensure startup lock is cleared and outputs reflect current OnOff attribute
-        sStartupSingleWhiteLock = false;
-        bool onoffNow = true;
-        chip::DeviceLayer::PlatformMgr().LockChipStack();
-        OnOff::Attributes::OnOff::Get(LIGHT_ENDPOINT, &onoffNow);
-        chip::DeviceLayer::PlatformMgr().UnlockChipStack();
-        if (!onoffNow)
-        {
-            MatterSetOffTransitionActive(1);
-            chip::DeviceLayer::PlatformMgr().LockChipStack();
-            OnOff::Attributes::OnOff::Set(LIGHT_ENDPOINT, false);
-            chip::DeviceLayer::PlatformMgr().UnlockChipStack();
-            MatterSetOffTransitionActive(0);
-            ApplyRgbwEffect(0, 0, 0, 0);
-        }
+        FinishPairSuccessEffect();
         return;
     }
 
@@ -1005,6 +1091,12 @@ void AppTask::RunEffectStep()
 
 void AppTask::OnButtonPressed()
 {
+    if (sEffectMode == EffectMode::ResetWarn || sEffectMode == EffectMode::ResetWarnEnd || sResetEndSequenceActive)
+    {
+        CancelResetWarningSequence();
+        return;
+    }
+
     if (sBootBreathingActive)
     {
         sBootBreathingActive = false;
@@ -1014,6 +1106,11 @@ void AppTask::OnButtonPressed()
             StopEffect();
         }
         sStartupSingleWhiteLock = false;
+        if (sPairSuccessPending)
+        {
+            BeginPairSuccessEffect();
+            return;
+        }
         ChipLogError(Zcl, "[DIM] boot breathing interrupted");
     }
 
@@ -1022,6 +1119,8 @@ void AppTask::OnButtonPressed()
     sLongPressMs = 0;
     sResetWarnActive = false;
     sResetTriggered = false;
+    sResetPendingAfterWarnEnd = false;
+    sResetEndSequenceActive = false;
     sDimmingActive = false;
     osTimerStart(sLongPressTimer, pdMS_TO_TICKS(APP_DIMMING_STEP_MS));
 }
@@ -1031,6 +1130,11 @@ void AppTask::OnButtonReleased()
     sButtonPressed = false;
     osTimerStop(sLongPressTimer);
 
+    if (sEffectMode == EffectMode::ResetWarnEnd || sResetEndSequenceActive)
+    {
+        return;
+    }
+
     if (sResetTriggered)
     {
         return;
@@ -1038,11 +1142,8 @@ void AppTask::OnButtonReleased()
 
     if (sLongPressMs >= APP_LONG_PRESS_RESET_WARN_MS)
     {
-        StopEffect();
-        RestorePreEffectState();
-        ChipLogError(Zcl, "[DIM] long press interrupted between 5s and 10s");
+        StartResetWarnEndEffect(false);
         sLongPressMs = 0;
-        sResetWarnActive = false;
         return;
     }
 
@@ -1187,6 +1288,11 @@ void AppTask::HandleLongPressTick()
         return;
     }
 
+    if (sResetEndSequenceActive || sResetTriggered)
+    {
+        return;
+    }
+
     sLongPressMs += APP_DIMMING_STEP_MS;
 
     if (!sResetWarnActive && sLongPressMs >= APP_LONG_PRESS_RESET_WARN_MS)
@@ -1200,21 +1306,7 @@ void AppTask::HandleLongPressTick()
     if (!sResetTriggered && sLongPressMs >= APP_LONG_PRESS_RESET_MS)
     {
         sResetTriggered = true;
-        StopEffect();
-        ApplyRgbwEffect(0, 0, 0, 0);
-
-        gResetLastFaultSignature = kLongPressResetSignature;
-        gResetLastFaultValue     = 10;
-
-        uint8_t mark = 1;
-        CHIP_ERROR markErr = chip::DeviceLayer::PersistedStorage::KeyValueStoreMgr().Put(kFactoryResetBootKey, &mark,
-                                                                                           sizeof(mark));
-        if (markErr != CHIP_NO_ERROR)
-        {
-            ChipLogError(Zcl, "[DIM] failed to store reset boot marker: %" CHIP_ERROR_FORMAT, markErr.Format());
-        }
-        ChipLogError(Zcl, "[DIM] long press 10s reset triggered");
-        chip::Server::GetInstance().ScheduleFactoryReset();
+        StartResetWarnEndEffect(true);
         return;
     }
 
@@ -1365,13 +1457,16 @@ void AppTask::OnPlatformEvent(const chip::DeviceLayer::ChipDeviceEvent * event, 
     if (event->Type == chip::DeviceLayer::DeviceEventType::kCommissioningComplete)
     {
         StopCommissioningWindow();
-        if (sBootBreathingActive)
+        osTimerStop(sBootDefaultTimer);
+
+        if (sBootBreathingActive && sEffectMode == EffectMode::BootBreathing)
         {
-            sBootBreathingActive = false;
-            osTimerStop(sBootDefaultTimer);
-            CaptureState(sPreEffectState);
-            StartEffect(EffectMode::PairSuccess);
-            ChipLogError(Zcl, "[DIM] pairing success effect");
+            sPairSuccessPending = true;
+            ChipLogError(Zcl, "[DIM] pairing success pending, wait for breath off");
+        }
+        else
+        {
+            BeginPairSuccessEffect();
         }
     }
 }

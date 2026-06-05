@@ -634,6 +634,30 @@ struct PowerOnMemoryState
 };
 
 static PowerOnMemoryState g_restoredPowerOnState = {};
+
+static void MatterSyncPowerOnMemoryAttributes()
+{
+    if (!g_hasRestoredPowerOnState)
+    {
+        return;
+    }
+
+    const bool prevSuppress = g_suppressAttributeHwOutput;
+    g_suppressAttributeHwOutput = true;
+
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    (void) LevelControl::Attributes::CurrentLevel::Set(1, g_restoredPowerOnState.level);
+    (void) OnOff::Attributes::OnOff::Set(1, g_restoredPowerOnState.onOff != 0);
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+
+    g_memLevel = g_restoredPowerOnState.level;
+    g_memOnOff = g_restoredPowerOnState.onOff;
+    g_suppressAttributeHwOutput = prevSuppress;
+
+    ChipLogError(Zcl, "[DIM] power-on attributes synced: on=%u level=%u",
+                 static_cast<unsigned>(g_restoredPowerOnState.onOff),
+                 static_cast<unsigned>(g_restoredPowerOnState.level));
+}
 }
 
 extern "C" bool MatterRestorePowerOnMemoryIfAny()
@@ -673,6 +697,8 @@ extern "C" bool MatterRestorePowerOnMemoryIfAny()
 
     RememberNonZeroRgbTarget(g_rgbTargetR, g_rgbTargetG, g_rgbTargetB);
 
+    MatterSyncPowerOnMemoryAttributes();
+
     ChipLogError(Zcl, "[DIM] power-on restore applied: on=%u level=%u rgb=%u,%u,%u w=%u",
                  static_cast<unsigned>(state.onOff), static_cast<unsigned>(state.level),
                  static_cast<unsigned>(state.r), static_cast<unsigned>(state.g), static_cast<unsigned>(state.b),
@@ -684,8 +710,31 @@ extern "C" void MatterSavePowerOnMemorySnapshot()
 {
     PowerOnMemoryState state = {};
     state.version = kPowerOnMemoryVersion;
-    state.onOff = g_memOnOff;
-    state.level = g_memLevel;
+
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    app::DataModel::Nullable<uint8_t> level;
+    if (LevelControl::Attributes::CurrentLevel::Get(1, level) == chip::Protocols::InteractionModel::Status::Success &&
+        !level.IsNull())
+    {
+        state.level = level.Value();
+        g_memLevel = level.Value();
+    }
+    else
+    {
+        state.level = g_memLevel;
+    }
+
+    bool onOff = false;
+    if (OnOff::Attributes::OnOff::Get(1, &onOff) == chip::Protocols::InteractionModel::Status::Success)
+    {
+        state.onOff = onOff ? 1u : 0u;
+        g_memOnOff = state.onOff;
+    }
+    else
+    {
+        state.onOff = g_memOnOff;
+    }
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
 
     if (state.onOff == 0u)
     {
@@ -734,6 +783,8 @@ extern "C" void MatterReapplyPowerOnMemoryOutput(void)
     {
         return;
     }
+
+    MatterSyncPowerOnMemoryAttributes();
 
     ApplyRgbwNow(g_restoredPowerOnState.r, g_restoredPowerOnState.g, g_restoredPowerOnState.b,
                  g_restoredPowerOnState.wDuty);

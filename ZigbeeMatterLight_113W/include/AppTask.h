@@ -65,6 +65,7 @@ public:
         None = 0,
         BootBreathing,
         ResetWarn,
+        ResetWarnEnd,
         PairSuccess,
         Identify,
     };
@@ -125,6 +126,12 @@ private:
     static void StartBootBreathing();
     static void StopIdentify();
     static void RestorePreEffectState();
+    static void TriggerFactoryResetAfterLongPress();
+    static void StartResetWarnEndEffect(bool pendingFactoryReset);
+    static void FinishResetWarnEndEffect();
+    static void CancelResetWarningSequence();
+    static void BeginPairSuccessEffect();
+    static void FinishPairSuccessEffect();
 
     /**
      * @brief Override of BaseApplication::AppInit() virtual method, called by BaseApplication::Init()
