@@ -101,13 +101,13 @@
 // state to another.
 #define ACTUATOR_MOVEMENT_PERIOD_MS 10
 
-// Button/commissioning timings (ms unless noted)
-#define APP_COMMISSIONING_WINDOW_MS (15u * 60u * 1000u)
-#define APP_BOOT_BREATH_MS (60u * 1000u)
-// Boot breathing: ramp time, hold time (ms)
-#define APP_BOOT_BREATH_RAMP_MS 800u
-#define APP_BOOT_BREATH_HOLD_MS 800u
-#define APP_BOOT_BREATH_CYCLE_MS (APP_BOOT_BREATH_RAMP_MS + APP_BOOT_BREATH_HOLD_MS + APP_BOOT_BREATH_RAMP_MS + APP_BOOT_BREATH_HOLD_MS)
+// 未配网呼吸灯时序（单位 ms）
+#define APP_COMMISSIONING_WINDOW_MS (15u * 60u * 1000u) // 配网窗口总时长 15 分钟
+#define APP_BOOT_BREATH_MS (60u * 1000u)                // 呼吸效果最长持续 60 秒（超时强制结束）
+// 单个呼吸周期四段：渐亮 → 保持最亮 → 渐灭 → 保持熄灭
+#define APP_BOOT_BREATH_RAMP_MS 800u   // 渐亮/渐灭各 800ms
+#define APP_BOOT_BREATH_HOLD_MS 800u   // 最亮/最暗保持各 800ms
+#define APP_BOOT_BREATH_CYCLE_MS (APP_BOOT_BREATH_RAMP_MS + APP_BOOT_BREATH_HOLD_MS + APP_BOOT_BREATH_RAMP_MS + APP_BOOT_BREATH_HOLD_MS) // 3200ms/周期
 #define APP_DOUBLE_CLICK_WINDOW_MS 1000u
 #define APP_LONG_PRESS_DIM_START_MS 500u
 #define APP_LONG_PRESS_RESET_WARN_MS 5000u
@@ -117,11 +117,15 @@
 // Lighting transition timings
 #define APP_ONOFF_FADE_MS 400u
 #define APP_COLOR_FADE_MS 400u
+// 长按调光：最低亮度(APP_BUTTON_LEVEL_MIN)↔最高(APP_LEVEL_MAX) 全程耗时 APP_DIMMING_PERIOD_MS
+#define APP_LEVEL_MAX 254u
+#define APP_BUTTON_LEVEL_MIN 26u // 10% — 按键长按调光下限；OnOff 效应不应把记忆亮度降到设备 MinLevel(1)
 #define APP_DIMMING_PERIOD_MS 3000u
-#define APP_DIMMING_STEP_MS 50u
+#define APP_DIMMING_STEP_MS 30u
 
 // Effect timings
-#define APP_EFFECT_TICK_MS 20u
+// 效果定时器步进（呼吸/Identify/重置警告等共用）；10ms 一步，800ms 渐亮段约 80 步
+#define APP_EFFECT_TICK_MS 10u
 #define APP_BOOT_BREATH_PEAK_W 100u
 #define APP_RESET_WARN_BLINK_MS 400u
 #define APP_RESET_WARN_END_OFF_MS 1200u

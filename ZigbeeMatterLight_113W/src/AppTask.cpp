@@ -107,6 +107,7 @@ extern "C" void MatterGetCurrentOutputRgbw(uint8_t * r, uint8_t * g, uint8_t * b
 extern "C" void MatterRestoreOutputState(uint8_t r, uint8_t g, uint8_t b, uint8_t wDuty, uint8_t colorSource,
                                             uint8_t presetActive);
 extern "C" void MatterApplyRgbwNow(uint8_t r, uint8_t g, uint8_t b, uint8_t wDuty);
+extern "C" void MatterApplyWhiteBreathPermille(uint16_t permille);
 extern "C" bool MatterRestorePowerOnMemoryIfAny();
 extern "C" void MatterSavePowerOnMemorySnapshot();
 extern "C" void MatterSetBootOutputSuppress(uint8_t suppress);
@@ -114,6 +115,12 @@ extern "C" void MatterReapplyPowerOnMemoryOutput();
 extern "C" void MatterComputeCtRgbw(uint16_t mireds, uint8_t level254, uint8_t * rOut, uint8_t * gOut, uint8_t * bOut,
                                      uint8_t * wDutyOut);
 extern "C" void MatterSetOffTransitionActive(uint8_t active);
+extern "C" void MatterSetButtonDimmingActive(uint8_t active);
+extern "C" void MatterApplyButtonDimmingQ16(int32_t levelQ16, uint8_t levelMin, uint8_t levelMax);
+extern "C" void MatterFinalizeButtonDimming(int32_t levelQ16, uint8_t levelMin, uint8_t levelMax);
+extern "C" uint8_t MatterGetLevelAtLastOn();
+extern "C" void MatterSnapshotLevelForOff();
+extern "C" void MatterSyncLevelBeforeOn();
 
 extern "C" {
 extern volatile uint32_t gResetDiagMagic;
@@ -132,8 +139,8 @@ namespace {
 constexpr uint32_t kResetDiagMagic = 0x52445331U; // RDS1
 constexpr uint32_t kLongPressResetSignature = 0x4C505253U; // LPRS
 
-constexpr uint8_t kLevelMax = 254;
-constexpr uint8_t kLevelMin = 26; // 10%
+constexpr uint8_t kLevelMax = APP_LEVEL_MAX;
+constexpr uint8_t kLevelMin = APP_BUTTON_LEVEL_MIN;
 
 struct LightPreset
 {
@@ -193,6 +200,9 @@ bool sDimmingActive = false;
 int8_t sNextDimmingDirection = -1;
 int8_t sDimmingDirection = -1;
 int32_t sDimmingLevelQ16 = 0;
+int32_t sDimmingOriginLevelQ16 = 0;
+uint32_t sDimmingStartTick = 0;
+uint8_t sDimmingLastAppliedLevel = 0xFF;
 size_t sPresetIndex = 0;
 AppTask::EffectMode sEffectMode = AppTask::EffectMode::None;
 uint32_t sEffectTickMs = 0;
@@ -200,9 +210,9 @@ bool sButtonPresetLatched = false;
 bool sStartupSingleWhiteLock = true;
 bool sCommissioningActive = false;
 bool sBootBreathingActive = false;
+bool sBootBreathExitPending = false;
 bool sPairSuccessPending = false;
 bool sIdentifyActive = false;
-AppTask::EffectMode sIdentifyResumeMode = AppTask::EffectMode::None;
 
 struct PreEffectState
 {
@@ -225,7 +235,6 @@ PreEffectState sPreEffectState = {};
 PreEffectState sIdentifyEffectState = {};
 
 static bool sDisableStartupEffects = false;
-static uint8_t sBootBreathDutyRemainder = 0;
 
 static uint8_t LevelToPercent(uint8_t level254)
 {
@@ -249,27 +258,48 @@ static void ApplyWhitePwmEffect(uint8_t levelPct)
     MatterApplyRgbwNow(0u, 0u, 0u, levelPct);
 }
 
+// 未配网呼吸专用：0~1000‰ 直接写 timer compare（见 MatterApplyWhiteBreathPermille）。
 static void ApplyWhitePwmEffectPermille(uint16_t levelPermille)
 {
-    if (levelPermille > 1000u)
+    MatterApplyWhiteBreathPermille(levelPermille);
+}
+
+// 渐亮/渐灭正弦缓动查表：80 步 × 10ms = 800ms，值域 0~1000‰（离线预计算，运行时 O(1) 查表）。
+static constexpr uint16_t kBootBreathRampPermilleLut[] = {
+       0,    0,    2,    3,    6,   10,   14,   19,
+      24,   31,   38,   46,   54,   64,   74,   84,
+      95,  107,  120,  133,  146,  161,  175,  190,
+     206,  222,  239,  256,  273,  291,  309,  327,
+     345,  364,  383,  402,  422,  441,  461,  480,
+     500,  520,  539,  559,  578,  598,  617,  636,
+     655,  673,  691,  709,  727,  744,  761,  778,
+     794,  810,  825,  839,  854,  867,  880,  893,
+     905,  916,  926,  936,  946,  954,  962,  969,
+     976,  981,  986,  990,  994,  997,  998, 1000,
+};
+static constexpr uint32_t kBootBreathRampSteps =
+    static_cast<uint32_t>(sizeof(kBootBreathRampPermilleLut) / sizeof(kBootBreathRampPermilleLut[0]));
+
+static_assert(APP_BOOT_BREATH_RAMP_MS % APP_EFFECT_TICK_MS == 0u,
+              "APP_BOOT_BREATH_RAMP_MS must be divisible by APP_EFFECT_TICK_MS");
+static_assert((APP_BOOT_BREATH_RAMP_MS / APP_EFFECT_TICK_MS) == kBootBreathRampSteps,
+              "kBootBreathRampPermilleLut size must match ramp duration");
+
+static uint16_t BootBreathRampPermille(uint32_t elapsedMs, bool rising)
+{
+    if (elapsedMs >= APP_BOOT_BREATH_RAMP_MS)
     {
-        levelPermille = 1000u;
+        return rising ? 1000u : 0u;
     }
 
-    uint8_t levelPct = static_cast<uint8_t>(levelPermille / 10u);
-    sBootBreathDutyRemainder = static_cast<uint8_t>(sBootBreathDutyRemainder + (levelPermille % 10u));
-    if (sBootBreathDutyRemainder >= 10u)
+    const uint32_t step = elapsedMs / APP_EFFECT_TICK_MS;
+    if (step >= kBootBreathRampSteps)
     {
-        ++levelPct;
-        sBootBreathDutyRemainder = static_cast<uint8_t>(sBootBreathDutyRemainder - 10u);
+        return rising ? 1000u : 0u;
     }
 
-    if (levelPct > 100u)
-    {
-        levelPct = 100u;
-    }
-
-    MatterApplyRgbwNow(0u, 0u, 0u, levelPct);
+    return rising ? kBootBreathRampPermilleLut[step]
+                  : kBootBreathRampPermilleLut[(kBootBreathRampSteps - 1u) - step];
 }
 
 static bool ShouldSkipEffect(AppTask::EffectMode mode)
@@ -311,6 +341,32 @@ static void HsvToRgb(uint8_t hue, uint8_t sat, uint8_t & r, uint8_t & g, uint8_t
     r = static_cast<uint8_t>(rF * 255.0f);
     g = static_cast<uint8_t>(gF * 255.0f);
     b = static_cast<uint8_t>(bF * 255.0f);
+}
+
+static void ComputePresetBasePermilles(const LightPreset & p, uint16_t & w, uint16_t & r, uint16_t & g, uint16_t & b)
+{
+    if (p.isCT)
+    {
+        uint8_t r8 = 0;
+        uint8_t g8 = 0;
+        uint8_t b8 = 0;
+        uint8_t w8 = 0;
+        MatterComputeCtRgbw(p.param1, APP_LEVEL_MAX, &r8, &g8, &b8, &w8);
+        r = static_cast<uint16_t>(r8) * 1000u / 255u;
+        g = static_cast<uint16_t>(g8) * 1000u / 255u;
+        b = static_cast<uint16_t>(b8) * 1000u / 255u;
+        w = static_cast<uint16_t>(w8) * 10u;
+        return;
+    }
+
+    uint8_t r8 = 0;
+    uint8_t g8 = 0;
+    uint8_t b8 = 0;
+    HsvToRgb(static_cast<uint8_t>(p.param1), 254, r8, g8, b8);
+    r = static_cast<uint16_t>(r8) * 1000u / 255u;
+    g = static_cast<uint16_t>(g8) * 1000u / 255u;
+    b = static_cast<uint16_t>(b8) * 1000u / 255u;
+    w = 0;
 }
 
 static void ComputePresetRgbw(const LightPreset & p, uint8_t level254, uint16_t & w, uint16_t & r, uint16_t & g, uint16_t & b)
@@ -425,16 +481,66 @@ static void RestoreButtonPresetMemoryState()
     {
         level254 = kLevelMax;
     }
-    uint16_t wOut = 0;
-    uint16_t rOut = 0;
-    uint16_t gOut = 0;
-    uint16_t bOut = 0;
-    ComputePresetRgbw(p, level254, wOut, rOut, gOut, bOut);
-    MatterRestoreButtonPresetPermilles(wOut, rOut, gOut, bOut);
-    ChipLogError(Zcl, "[DIM] restored preset memory: preset=%u level=%u permille=%u,%u,%u,%u",
+    uint16_t wBase = 0;
+    uint16_t rBase = 0;
+    uint16_t gBase = 0;
+    uint16_t bBase = 0;
+    ComputePresetBasePermilles(p, wBase, rBase, gBase, bBase);
+    MatterRestoreButtonPresetPermilles(wBase, rBase, gBase, bBase);
+    ChipLogError(Zcl, "[DIM] restored preset memory: preset=%u level=%u base_permille=%u,%u,%u,%u",
                  static_cast<unsigned>(sPresetIndex + 1), static_cast<unsigned>(level254),
-                 static_cast<unsigned>(wOut), static_cast<unsigned>(rOut),
-                 static_cast<unsigned>(gOut), static_cast<unsigned>(bOut));
+                 static_cast<unsigned>(wBase), static_cast<unsigned>(rBase),
+                 static_cast<unsigned>(gBase), static_cast<unsigned>(bBase));
+}
+
+extern "C" void MatterClearButtonPresetLatch(void)
+{
+    if (!sButtonPresetLatched)
+    {
+        return;
+    }
+
+    sButtonPresetLatched = false;
+    SaveButtonPresetMemoryState();
+}
+
+static void ApplyButtonPresetAtIndex(size_t presetIndex, uint8_t level254)
+{
+    if (presetIndex >= kPresetCount)
+    {
+        return;
+    }
+
+    sPresetIndex = presetIndex;
+    const LightPreset & p = kPresets[sPresetIndex];
+
+    MatterSetOffTransitionActive(0);
+    MatterSetButtonPresetSuppressColorCallbacks(4);
+    MatterSetButtonPresetTransaction(1);
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    if (p.isCT)
+    {
+        ColorControl::Attributes::ColorTemperatureMireds::Set(LIGHT_ENDPOINT, p.param1);
+    }
+    else
+    {
+        ColorControl::Attributes::CurrentHue::Set(LIGHT_ENDPOINT, static_cast<uint8_t>(p.param1));
+        ColorControl::Attributes::CurrentSaturation::Set(LIGHT_ENDPOINT, 254);
+    }
+    OnOff::Attributes::OnOff::Set(LIGHT_ENDPOINT, true);
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+    MatterSetButtonPresetTransaction(0);
+
+    sButtonPresetLatched = true;
+    uint16_t wBase = 0;
+    uint16_t rBase = 0;
+    uint16_t gBase = 0;
+    uint16_t bBase = 0;
+    ComputePresetBasePermilles(p, wBase, rBase, gBase, bBase);
+    MatterSetButtonPresetPwmWithFade(wBase, rBase, gBase, bBase, level254);
+
+    SaveButtonPresetMemoryState();
+    MatterSavePowerOnMemorySnapshot();
 }
 
 static void PrintPairingQrUrlToRtt()
@@ -654,11 +760,13 @@ CHIP_ERROR AppTask::AppInit()
 
         if (hasResetBootMark)
         {
+            // 长按恢复出厂后的冷启动：先灭灯 2s，再由 sResetOffTimer 触发 StartBootBreathing()
             ApplyRgbwEffect(0, 0, 0, 0);
             osTimerStart(sResetOffTimer, pdMS_TO_TICKS(APP_RESET_BOOT_OFF_MS));
         }
         else
         {
+            // 首次上电未配网：开配网窗口 + 启动白光呼吸
             StartCommissioningWindow();
             StartBootBreathing();
         }
@@ -848,12 +956,12 @@ static void RestoreState(const PreEffectState & state)
         sButtonPresetLatched = true;
         MatterSetButtonPresetActive(1);
         const LightPreset & p = kPresets[sPresetIndex];
-        uint16_t wOut = 0;
-        uint16_t rOut = 0;
-        uint16_t gOut = 0;
-        uint16_t bOut = 0;
-        ComputePresetRgbw(p, state.level, wOut, rOut, gOut, bOut);
-        MatterSetButtonPresetPwmWithFade(wOut, rOut, gOut, bOut, state.level);
+        uint16_t wBase = 0;
+        uint16_t rBase = 0;
+        uint16_t gBase = 0;
+        uint16_t bBase = 0;
+        ComputePresetBasePermilles(p, wBase, rBase, gBase, bBase);
+        MatterSetButtonPresetPwmWithFade(wBase, rBase, gBase, bBase, state.level);
     }
     else
     {
@@ -901,9 +1009,14 @@ void AppTask::CancelResetWarningSequence()
     sResetWarnActive = false;
     sDimmingActive = false;
     osTimerStop(sLongPressTimer);
-    StopEffect();
-    RestoreState(sPreEffectState);
     sLongPressMs = 0;
+
+    if (sEffectMode == EffectMode::ResetWarn || sEffectMode == EffectMode::ResetWarnEnd)
+    {
+        StopEffect();
+    }
+
+    RestoreState(sPreEffectState);
     ChipLogError(Zcl, "[DIM] reset warning sequence cancelled");
 }
 
@@ -981,39 +1094,39 @@ void AppTask::RunEffectStep()
         return;
     }
 
+    // -------------------------------------------------------------------------
+    // 未配网呼吸灯（EffectMode::BootBreathing）
+    // 由 sEffectTimer 每 APP_EFFECT_TICK_MS(10ms) 调用一次 RunEffectStep()。
+    // sEffectTickMs 递增，对 APP_BOOT_BREATH_CYCLE_MS 取模得到周期内位置 t。
+    // 四段波形：渐亮(0→1000‰) → 保持最亮 → 渐灭(1000‰→0) → 保持熄灭，然后循环。
+    // 每步查表得 whitePermille，再调用 MatterApplyWhiteBreathPermille() 写 timer compare。
+    // -------------------------------------------------------------------------
     if (sEffectMode == EffectMode::BootBreathing)
     {
         const uint32_t cycleMs = APP_BOOT_BREATH_CYCLE_MS;
         const uint32_t rampMs = APP_BOOT_BREATH_RAMP_MS;
         const uint32_t holdMs = APP_BOOT_BREATH_HOLD_MS;
-        const uint32_t t = sEffectTickMs % cycleMs;
+        const uint32_t t = sEffectTickMs % cycleMs; // 当前周期内时间位置 [0, cycleMs)
         uint16_t whitePermille = 0u;
-        const bool logCheckpoint = ((t % 400u) == 0u) || (t == rampMs) || (t == (rampMs + holdMs))
-            || (t == (rampMs + holdMs + rampMs));
 
         if (t < rampMs) {
-            // ramp up 0 -> 1000
-            whitePermille = static_cast<uint16_t>((t * 1000u) / rampMs);
+            // 第 1 段：查表渐亮 0 → 1000‰
+            whitePermille = BootBreathRampPermille(t, true);
         } else if (t < (rampMs + holdMs)) {
-            // hold at 100%
+            // 第 2 段：保持最亮
             whitePermille = 1000u;
         } else if (t < (rampMs + holdMs + rampMs)) {
-            // ramp down 1000 -> 0
-            uint32_t td = t - (rampMs + holdMs);
-            whitePermille = static_cast<uint16_t>(((rampMs - td) * 1000u) / rampMs);
+            // 第 3 段：查表渐灭 1000‰ → 0
+            const uint32_t td = t - (rampMs + holdMs);
+            whitePermille = BootBreathRampPermille(td, false);
         } else {
-            // hold at 0%
+            // 第 4 段：保持熄灭
             whitePermille = 0u;
         }
 
-        if (logCheckpoint)
-        {
-            ChipLogError(Zcl, "[BOOT] tick=%u t=%u whitePermille=%u remainder=%u",
-                         static_cast<unsigned>(sEffectTickMs), static_cast<unsigned>(t),
-                         static_cast<unsigned>(whitePermille), static_cast<unsigned>(sBootBreathDutyRemainder));
-        }
         ApplyWhitePwmEffectPermille(whitePermille);
 
+        // 配网成功且处于“渐灭完成后的熄灭段”时，切到配网成功快闪（PairSuccess）
         const uint32_t offHoldStart = rampMs + holdMs + rampMs;
         if (sPairSuccessPending && t >= offHoldStart && whitePermille == 0u)
         {
@@ -1091,6 +1204,12 @@ void AppTask::RunEffectStep()
 
 void AppTask::OnButtonPressed()
 {
+    if (sIdentifyActive || sEffectMode == EffectMode::Identify)
+    {
+        // Identify 优先级最高：按键不改变 Identify 输出
+        return;
+    }
+
     if (sEffectMode == EffectMode::ResetWarn || sEffectMode == EffectMode::ResetWarnEnd || sResetEndSequenceActive)
     {
         CancelResetWarningSequence();
@@ -1111,6 +1230,7 @@ void AppTask::OnButtonPressed()
             BeginPairSuccessEffect();
             return;
         }
+        sBootBreathExitPending = true;
         ChipLogError(Zcl, "[DIM] boot breathing interrupted");
     }
 
@@ -1122,6 +1242,7 @@ void AppTask::OnButtonPressed()
     sResetPendingAfterWarnEnd = false;
     sResetEndSequenceActive = false;
     sDimmingActive = false;
+    sDimmingLastAppliedLevel = 0xFF;
     osTimerStart(sLongPressTimer, pdMS_TO_TICKS(APP_DIMMING_STEP_MS));
 }
 
@@ -1129,28 +1250,91 @@ void AppTask::OnButtonReleased()
 {
     sButtonPressed = false;
     osTimerStop(sLongPressTimer);
+    MatterSetButtonDimmingActive(0);
 
-    if (sEffectMode == EffectMode::ResetWarnEnd || sResetEndSequenceActive)
+    if (sIdentifyActive)
     {
-        return;
+        // Identify 期间松手：清除可能残留的重置状态，避免 Identify 结束后误恢复红灯
+        if (sResetWarnActive || sResetEndSequenceActive || sResetTriggered || sResetPendingAfterWarnEnd)
+        {
+            sResetPendingAfterWarnEnd = false;
+            sResetEndSequenceActive = false;
+            sResetTriggered = false;
+            sResetWarnActive = false;
+            sDimmingActive = false;
+            sLongPressMs = 0;
+        }
     }
 
-    if (sResetTriggered)
+    if (!sIdentifyActive)
     {
-        return;
-    }
+        if (sEffectMode == EffectMode::ResetWarnEnd || sResetEndSequenceActive)
+        {
+            // 慢闪收尾阶段且非即将恢复出厂：松手立即恢复，不播完慢闪序列
+            if (!sResetPendingAfterWarnEnd && !sResetTriggered)
+            {
+                CancelResetWarningSequence();
+            }
+            return;
+        }
 
-    if (sLongPressMs >= APP_LONG_PRESS_RESET_WARN_MS)
-    {
-        StartResetWarnEndEffect(false);
-        sLongPressMs = 0;
-        return;
-    }
+        if (sResetTriggered)
+        {
+            return;
+        }
 
-    if (sLongPressMs >= APP_LONG_PRESS_DIM_START_MS)
+        // 5~10s 快闪红灯警告期间松手：立即恢复先前状态，不触发慢闪收尾
+        if (sEffectMode == EffectMode::ResetWarn || sResetWarnActive)
+        {
+            sBootBreathExitPending = false;
+            CancelResetWarningSequence();
+            sLongPressMs = 0;
+            return;
+        }
+
+        if (sLongPressMs >= APP_LONG_PRESS_RESET_WARN_MS)
+        {
+            sBootBreathExitPending = false;
+            CancelResetWarningSequence();
+            sLongPressMs = 0;
+            return;
+        }
+
+        if (sLongPressMs >= APP_LONG_PRESS_DIM_START_MS)
+        {
+            if (sDimmingActive)
+            {
+                MatterFinalizeButtonDimming(sDimmingLevelQ16, kLevelMin, kLevelMax);
+            }
+            sBootBreathExitPending = false;
+            sDimmingActive = false;
+            sLongPressMs = 0;
+            return;
+        }
+    }
+    else
     {
         sDimmingActive = false;
         sLongPressMs = 0;
+    }
+
+    // 未配网时任意短按：重置 15 分钟配网窗口（Matter 窗口 + 本地超时定时器）
+    if (!BaseApplication::sIsProvisioned)
+    {
+        RestartCommissioningTimer();
+    }
+
+    if (sBootBreathExitPending)
+    {
+        sBootBreathExitPending = false;
+        sImmediateSinglePending = false;
+        sClickCount = 0;
+        osTimerStop(sClickTimer);
+
+        chip::DeviceLayer::PlatformMgr().LockChipStack();
+        LevelControl::Attributes::CurrentLevel::Set(LIGHT_ENDPOINT, kLevelMax);
+        chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+        ApplyButtonPresetAtIndex(0, kLevelMax);
         return;
     }
 
@@ -1183,11 +1367,6 @@ void AppTask::OnButtonReleased()
 
 void AppTask::HandleSingleClick()
 {
-    if (sCommissioningActive)
-    {
-        RestartCommissioningTimer();
-    }
-
     bool onoff = true;
     chip::DeviceLayer::PlatformMgr().LockChipStack();
     OnOff::Attributes::OnOff::Get(LIGHT_ENDPOINT, &onoff);
@@ -1196,28 +1375,23 @@ void AppTask::HandleSingleClick()
     chip::DeviceLayer::PlatformMgr().LockChipStack();
     if (onoff)
     {
+        MatterSnapshotLevelForOff();
         MatterSetOffTransitionActive(1);
         OnOff::Attributes::OnOff::Set(LIGHT_ENDPOINT, false);
     }
     else
     {
         MatterSetOffTransitionActive(0);
-        if (sButtonPresetLatched)
+        MatterSyncLevelBeforeOn();
+        if (sButtonPresetLatched && MatterGetColorSource() == 1u)
         {
-            app::DataModel::Nullable<uint8_t> level;
-            uint8_t level254 = kLevelMax;
-            if (LevelControl::Attributes::CurrentLevel::Get(LIGHT_ENDPOINT, level) == Protocols::InteractionModel::Status::Success &&
-                !level.IsNull())
-            {
-                level254 = level.Value();
-            }
             const LightPreset & p = kPresets[sPresetIndex];
-            uint16_t wOut = 0;
-            uint16_t rOut = 0;
-            uint16_t gOut = 0;
-            uint16_t bOut = 0;
-            ComputePresetRgbw(p, level254, wOut, rOut, gOut, bOut);
-            MatterRestoreButtonPresetPermilles(wOut, rOut, gOut, bOut);
+            uint16_t wBase = 0;
+            uint16_t rBase = 0;
+            uint16_t gBase = 0;
+            uint16_t bBase = 0;
+            ComputePresetBasePermilles(p, wBase, rBase, gBase, bBase);
+            MatterRestoreButtonPresetPermilles(wBase, rBase, gBase, bBase);
             MatterSetButtonPresetActive(1);
         }
         OnOff::Attributes::OnOff::Set(LIGHT_ENDPOINT, true);
@@ -1246,44 +1420,21 @@ void AppTask::HandleDoubleClick()
     const uint8_t currentLevel = level.Value();
 
     sPresetIndex = (sPresetIndex + 1) % kPresetCount;
-    const LightPreset & p = kPresets[sPresetIndex];
-
-    MatterSetButtonPresetSuppressColorCallbacks(4);
-    MatterSetButtonPresetTransaction(1);
-    chip::DeviceLayer::PlatformMgr().LockChipStack();
-    if (p.isCT)
-    {
-        ColorControl::Attributes::ColorTemperatureMireds::Set(LIGHT_ENDPOINT, p.param1);
-    }
-    else
-    {
-        ColorControl::Attributes::CurrentHue::Set(LIGHT_ENDPOINT, static_cast<uint8_t>(p.param1));
-        ColorControl::Attributes::CurrentSaturation::Set(LIGHT_ENDPOINT, 254);
-    }
-    OnOff::Attributes::OnOff::Set(LIGHT_ENDPOINT, true);
-    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
-    MatterSetButtonPresetTransaction(0);
-
-    sButtonPresetLatched = true;
-    uint16_t wOut = 0;
-    uint16_t rOut = 0;
-    uint16_t gOut = 0;
-    uint16_t bOut = 0;
-    ComputePresetRgbw(p, currentLevel, wOut, rOut, gOut, bOut);
-    MatterSetButtonPresetPwmWithFade(wOut, rOut, gOut, bOut, currentLevel);
+    ApplyButtonPresetAtIndex(sPresetIndex, currentLevel);
     ChipLogError(DeviceLayer,
-                 "[DIM][BTN] double preset=%u level=%u%% rgbw=%u,%u,%u,%u",
+                 "[DIM][BTN] double preset=%u level=%u%% rgbw from preset index %u",
                  static_cast<unsigned>(sPresetIndex + 1), static_cast<unsigned>(LevelToPercent(currentLevel)),
-                 static_cast<unsigned>(wOut), static_cast<unsigned>(rOut),
-                 static_cast<unsigned>(gOut), static_cast<unsigned>(bOut));
-
-    SaveButtonPresetMemoryState();
-    MatterSavePowerOnMemorySnapshot();
+                 static_cast<unsigned>(sPresetIndex));
 }
 
 void AppTask::HandleLongPressTick()
 {
     if (!sButtonPressed)
+    {
+        return;
+    }
+
+    if (sIdentifyActive || sEffectMode == EffectMode::Identify)
     {
         return;
     }
@@ -1299,6 +1450,7 @@ void AppTask::HandleLongPressTick()
     {
         sResetWarnActive = true;
         sDimmingActive = false;
+        MatterSetButtonDimmingActive(0);
         StartEffect(EffectMode::ResetWarn);
         ChipLogError(Zcl, "[DIM] long press 5s warning");
     }
@@ -1344,31 +1496,53 @@ void AppTask::HandleLongPressTick()
                 sDimmingDirection = sNextDimmingDirection;
             }
             sNextDimmingDirection = (sDimmingDirection > 0) ? -1 : 1;
+            sDimmingOriginLevelQ16 = sDimmingLevelQ16;
+            sDimmingStartTick = osKernelGetTickCount();
+            sDimmingLastAppliedLevel = curLevel;
             sDimmingActive = true;
+            MatterSetButtonDimmingActive(1);
         }
 
         if (sDimmingActive)
         {
             const int32_t range = static_cast<int32_t>(kLevelMax) - static_cast<int32_t>(kLevelMin);
-            const int32_t stepQ16 = (range << 16) * static_cast<int32_t>(APP_DIMMING_STEP_MS) /
-                static_cast<int32_t>(APP_DIMMING_PERIOD_MS);
-            sDimmingLevelQ16 += (sDimmingDirection > 0) ? stepQ16 : -stepQ16;
-
-            int32_t levelQ16Min = static_cast<int32_t>(kLevelMin) << 16;
-            int32_t levelQ16Max = static_cast<int32_t>(kLevelMax) << 16;
-            if (sDimmingLevelQ16 < levelQ16Min)
+            const uint32_t tickFreq = osKernelGetTickFreq();
+            uint32_t elapsedMs = 0u;
+            if (tickFreq != 0u)
             {
-                sDimmingLevelQ16 = levelQ16Min;
+                elapsedMs = ((osKernelGetTickCount() - sDimmingStartTick) * 1000u) / tickFreq;
             }
-            if (sDimmingLevelQ16 > levelQ16Max)
+            if (elapsedMs > APP_DIMMING_PERIOD_MS)
             {
-                sDimmingLevelQ16 = levelQ16Max;
+                elapsedMs = APP_DIMMING_PERIOD_MS;
             }
 
-            const uint8_t newLevel = static_cast<uint8_t>(sDimmingLevelQ16 >> 16);
-            chip::DeviceLayer::PlatformMgr().LockChipStack();
-            LevelControl::Attributes::CurrentLevel::Set(LIGHT_ENDPOINT, newLevel);
-            chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+            const int32_t deltaQ16 = static_cast<int32_t>((static_cast<int64_t>(range) << 16) * static_cast<int64_t>(elapsedMs) /
+                static_cast<int64_t>(APP_DIMMING_PERIOD_MS));
+            int32_t targetQ16 = sDimmingOriginLevelQ16 + ((sDimmingDirection > 0) ? deltaQ16 : -deltaQ16);
+
+            const int32_t levelQ16Min = static_cast<int32_t>(kLevelMin) << 16;
+            const int32_t levelQ16Max = static_cast<int32_t>(kLevelMax) << 16;
+            if (targetQ16 < levelQ16Min)
+            {
+                targetQ16 = levelQ16Min;
+            }
+            if (targetQ16 > levelQ16Max)
+            {
+                targetQ16 = levelQ16Max;
+            }
+
+            sDimmingLevelQ16 = targetQ16;
+            MatterApplyButtonDimmingQ16(targetQ16, kLevelMin, kLevelMax);
+
+            const uint8_t newLevel = static_cast<uint8_t>(targetQ16 >> 16);
+            if (newLevel != sDimmingLastAppliedLevel)
+            {
+                sDimmingLastAppliedLevel = newLevel;
+                chip::DeviceLayer::PlatformMgr().LockChipStack();
+                LevelControl::Attributes::CurrentLevel::Set(LIGHT_ENDPOINT, newLevel);
+                chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+            }
         }
     }
 }
@@ -1419,10 +1593,11 @@ void AppTask::ButtonTimerEventHandler(AppEvent * aEvent)
 
     if (ctx == kTimerCtxBootBreathEnd)
     {
+        // APP_BOOT_BREATH_MS(60s) 到期且仍未配网：强制停止呼吸并灭灯
         sBootBreathingActive = false;
         StopEffect();
         sStartupSingleWhiteLock = false;
-        // Force physical off before syncing Matter OnOff (breath used white PWM directly).
+        // 呼吸期间绕过 Matter 属性直接驱动 PWM，结束前需先物理灭灯再同步 OnOff
         MatterApplyRgbwNow(0u, 0u, 0u, 0u);
         MatterSetOffTransitionActive(1);
         chip::DeviceLayer::PlatformMgr().LockChipStack();
@@ -1509,19 +1684,37 @@ void AppTask::StopCommissioningWindow()
 
 void AppTask::RestartCommissioningTimer()
 {
-    if (!sCommissioningActive)
+    if (BaseApplication::sIsProvisioned)
     {
         return;
     }
 
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    auto & commissioningMgr = chip::Server::GetInstance().GetCommissioningWindowManager();
+    if (commissioningMgr.IsCommissioningWindowOpen())
+    {
+        commissioningMgr.CloseCommissioningWindow();
+    }
+    const CHIP_ERROR err = commissioningMgr.OpenBasicCommissioningWindow(
+        chip::System::Clock::Seconds32(APP_COMMISSIONING_WINDOW_MS / 1000u));
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+    if (err != CHIP_NO_ERROR)
+    {
+        ChipLogError(AppServer, "[DIM] failed to restart commissioning window: %" CHIP_ERROR_FORMAT, err.Format());
+        osTimerStop(sPostResetWindowTimer);
+        sCommissioningActive = false;
+        return;
+    }
+
+    sCommissioningActive = true;
     osTimerStart(sPostResetWindowTimer, pdMS_TO_TICKS(APP_COMMISSIONING_WINDOW_MS));
+    ChipLogError(Zcl, "[DIM] commissioning window restarted (%u min)", APP_COMMISSIONING_WINDOW_MS / 60000u);
 }
 
 void AppTask::StartBootBreathing()
 {
     if (sBootBreathingActive)
     {
-        ChipLogError(Zcl, "[BOOT] start ignored, already active");
         return;
     }
 
@@ -1539,13 +1732,10 @@ void AppTask::StartBootBreathing()
 
     CaptureState(sPreEffectState);
     sBootBreathingActive = true;
-    sBootBreathDutyRemainder = 0;
-    ChipLogError(Zcl, "[BOOT] start provisioning=%u commissioned=%u", BaseApplication::sIsProvisioned ? 1u : 0u,
-                 sCommissioningActive ? 1u : 0u);
-    // Clear RGB immediately (power-on memory may have restored color before breath starts).
+    // 呼吸只亮白光：先清 RGB，避免掉电记忆或残留颜色干扰
     MatterApplyRgbwNow(0u, 0u, 0u, 0u);
+    // 启动效果定时器（20ms 步进）并注册 60s 总超时
     StartEffect(EffectMode::BootBreathing);
-    sBootBreathDutyRemainder = 0;
     osTimerStart(sBootDefaultTimer, pdMS_TO_TICKS(APP_BOOT_BREATH_MS));
     ChipLogError(Zcl, "[DIM] boot breathing started");
 }
@@ -1567,9 +1757,43 @@ void AppTask::StartIdentify(uint16_t identifyTimeSec)
 
     if (!sIdentifyActive)
     {
-        CaptureState(sIdentifyEffectState);
-        sIdentifyResumeMode = sEffectMode;
-        StopEffect();
+        const bool resetInProgress = sResetWarnActive || sResetEndSequenceActive || sResetTriggered || sResetPendingAfterWarnEnd
+            || sEffectMode == EffectMode::ResetWarn || sEffectMode == EffectMode::ResetWarnEnd;
+
+        if (resetInProgress)
+        {
+            // 长按重置进行中：Identify 结束后恢复到长按前的状态，而非恢复红灯闪烁
+            sIdentifyEffectState = sPreEffectState;
+            sResetPendingAfterWarnEnd = false;
+            sResetEndSequenceActive = false;
+            sResetTriggered = false;
+            sResetWarnActive = false;
+            sDimmingActive = false;
+            osTimerStop(sLongPressTimer);
+            sLongPressMs = 0;
+        }
+
+        if (sBootBreathingActive)
+        {
+            sBootBreathingActive = false;
+            osTimerStop(sBootDefaultTimer);
+            sStartupSingleWhiteLock = false;
+        }
+
+        if (sEffectMode == EffectMode::PairSuccess)
+        {
+            sPairSuccessPending = false;
+        }
+
+        if (!resetInProgress)
+        {
+            CaptureState(sIdentifyEffectState);
+        }
+
+        if (sEffectMode != EffectMode::None && sEffectMode != EffectMode::Identify)
+        {
+            StopEffect();
+        }
     }
 
     sIdentifyActive = true;
@@ -1589,17 +1813,7 @@ void AppTask::StopIdentify()
     sIdentifyActive = false;
     osTimerStop(sIdentifyTimer);
     StopEffect();
-
-    if (sIdentifyResumeMode != EffectMode::None)
-    {
-        StartEffect(sIdentifyResumeMode);
-    }
-    else
-    {
-        RestoreState(sIdentifyEffectState);
-    }
-
-    sIdentifyResumeMode = EffectMode::None;
+    RestoreState(sIdentifyEffectState);
 }
 
 void AppTask::ButtonEventHandler(uint8_t button, uint8_t btnAction)
