@@ -121,7 +121,9 @@
 #define APP_LEVEL_MAX 254u
 #define APP_BUTTON_LEVEL_MIN 26u // 10% — 按键长按调光下限；OnOff 效应不应把记忆亮度降到设备 MinLevel(1)
 #define APP_DIMMING_PERIOD_MS 3000u
-#define APP_DIMMING_STEP_MS 30u
+// 调光刷新步进：20ms≈50fps，与颜色渐变定时器一致。30ms(≈33fps) 的逐帧刷新会落在可见闪烁频段。
+// 注意：长按计时(sLongPressMs)与亮度速度均基于真实时间/elapsed，改此值不影响调光速度与长按判定。
+#define APP_DIMMING_STEP_MS 20u
 
 // Effect timings
 // 效果定时器步进（呼吸/Identify/重置警告等共用）；10ms 一步，800ms 渐亮段约 80 步

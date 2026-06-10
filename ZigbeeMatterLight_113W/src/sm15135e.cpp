@@ -4,28 +4,20 @@
 #include "spidrv.h"
 #include <string.h>
 
-// #define SM15135E_SPI_SYMBOL_BITS 4u
-
-// 💡 核心修改：升级为手册指定的 112 Bits
-// #define SM15135E_FRAME_BITS   112u
-// #define SM15135E_ENCODED_BITS (SM15135E_FRAME_BITS * SM15135E_SPI_SYMBOL_BITS)
-// 🎯 (112 * 4 + 7) / 8 = 56 字节静态安全 DMA 缓冲区
-
-//(SM15135E_FRAME_BITS >> 1)
-//((SM15135E_ENCODED_BITS + 7u) / 8u) //+7 是为了向上取整到完整字节
-
 #define SM15135E_RESET_BUF_BYTES 128u // 复位发送长度
 #define SM15135E_ENCODED_BYTES   56   // 数据发送长度
 
 #define sm15135e_mask5(v) (uint8_t)(v & 0x1Fu)
 
-// ⚡⚡⚡ 无分支无跳转宏：通过纯算术合并图案 ⚡⚡⚡
-// bh 和 bl 必须是严格的 0 或 1。
-// 映射单个逻辑位：0x08u | (bit << 2u) | (bit << 1u)
-// bh（高位）转换后整体左移 4 位，再与 bl（低位）相或
-#define PACK_SPI_BYTE_PURE(bh, bl)                                                                                     \
-    ((uint8_t)(((0x08u | ((uint8_t)(bh) << 2u) | ((uint8_t)(bh) << 1u)) << 4u)                                         \
-               | (0x08u | ((uint8_t)(bl) << 2u) | ((uint8_t)(bl) << 1u))))
+// spi 查表函数值
+static const uint8_t SPI_PACK_LUT[2][2] = {
+    // bl = 0, bl = 1
+    {0x88, 0x8E}, // bh = 0
+    {0xE8, 0xEE}, // bh = 1
+};
+
+// 改为查表
+#define PACK_SPI_BYTE_PURE(bh, bl) (SPI_PACK_LUT[bh][bl])
 
 typedef union
 {
@@ -67,12 +59,36 @@ typedef union
     } bits;
 } sm15135e_bit_extractor_t;
 
-// 静态安全缓冲区，规避栈释放导致的 DMA 硬件报错
-static uint8_t sm15135e_reset_buf[SM15135E_RESET_BUF_BYTES] = {0};
+static uint8_t sm15135e_reset_buf[SM15135E_RESET_BUF_BYTES] = { 0 };
 static uint8_t sm15135e_frame_buf[SM15135E_ENCODED_BYTES];
 
-// 控制器全局单例标志，确保 SPI/EUSART 只初始化一次
 static bool sm15135e_spi_inited = false;
+static osMutexId_t sm15135e_bus_mutex = nullptr;
+
+static void sm15135e_bus_mutex_init(void)
+{
+    if (sm15135e_bus_mutex == nullptr)
+    {
+        sm15135e_bus_mutex = osMutexNew(nullptr);
+    }
+}
+
+static void sm15135e_bus_lock(void)
+{
+    sm15135e_bus_mutex_init();
+    if (sm15135e_bus_mutex != nullptr)
+    {
+        (void) osMutexAcquire(sm15135e_bus_mutex, osWaitForever);
+    }
+}
+
+static void sm15135e_bus_unlock(void)
+{
+    if (sm15135e_bus_mutex != nullptr)
+    {
+        (void) osMutexRelease(sm15135e_bus_mutex);
+    }
+}
 
 static void sm15135e_spi_init_once(void)
 {
@@ -81,88 +97,128 @@ static void sm15135e_spi_init_once(void)
         return;
     }
     sl_spidrv_init_instances();
-    osDelay(10); // 等待 EUSART/SPI 硬件总线时钟稳定
+    osDelay(10);
     sm15135e_spi_inited = true;
+}
+
+static bool sm15135e_spi_transmit(const void * buffer, size_t count)
+{
+    sm15135e_spi_init_once();
+
+    for (uint8_t attempt = 0; attempt < 8u; ++attempt)
+    {
+        const Ecode_t status =
+            SPIDRV_MTransmitB(sl_spidrv_eusart_SPI_SM15135E_handle, buffer, static_cast<int>(count));
+        if (status == ECODE_EMDRV_SPIDRV_OK)
+        {
+            return true;
+        }
+        if (status != ECODE_EMDRV_SPIDRV_BUSY)
+        {
+            return false;
+        }
+        osDelay(1);
+    }
+
+    return false;
+}
+
+static void sm15135e_encode_frame(const sm15135e_pixel_t * p, uint8_t * out_buf)
+{
+    size_t                   byte_idx = 0;
+    sm15135e_bit_extractor_t ext;
+
+    const uint16_t gray_channels[5] = { p->r, p->g, p->b, p->w, p->y };
+    for (uint8_t i = 0; i < 5; ++i)
+    {
+        ext.val32 = (uint32_t) gray_channels[i];
+
+        out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b15, ext.bits.b14);
+        out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b13, ext.bits.b12);
+        out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b11, ext.bits.b10);
+        out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b9, ext.bits.b8);
+        out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b7, ext.bits.b6);
+        out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b5, ext.bits.b4);
+        out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b3, ext.bits.b2);
+        out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b1, ext.bits.b0);
+    }
+
+    uint32_t pack32 = 0;
+    pack32 |= (uint32_t) (p->gain_r & 0x1Fu) << 27u;
+    pack32 |= (uint32_t) (p->gain_g & 0x1Fu) << 22u;
+    pack32 |= (uint32_t) (p->gain_b & 0x1Fu) << 17u;
+    pack32 |= (uint32_t) (p->gain_w & 0x1Fu) << 12u;
+    pack32 |= (uint32_t) (p->gain_y & 0x1Fu) << 7u;
+    pack32 |= (uint32_t) (p->standby & 0x03u) << 5u;
+    pack32 |= (uint32_t) (p->reserve & 0x1Fu);
+
+    ext.val32 = pack32;
+
+    out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b31, ext.bits.b30);
+    out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b29, ext.bits.b28);
+    out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b27, ext.bits.b26);
+    out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b25, ext.bits.b24);
+    out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b23, ext.bits.b22);
+    out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b21, ext.bits.b20);
+    out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b19, ext.bits.b18);
+    out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b17, ext.bits.b16);
+    out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b15, ext.bits.b14);
+    out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b13, ext.bits.b12);
+    out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b11, ext.bits.b10);
+    out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b9, ext.bits.b8);
+    out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b7, ext.bits.b6);
+    out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b5, ext.bits.b4);
+    out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b3, ext.bits.b2);
+    out_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b1, ext.bits.b0);
 }
 
 void sm15135e_send_reset(void)
 {
-    sm15135e_spi_init_once();
-    // memset(sm15135e_reset_buf, 0, sizeof(sm15135e_reset_buf));
-    //  🚀 通过 Silicon Labs LDMA 引擎异步发送 Reset 信号
-    (void)SPIDRV_MTransmitB(sl_spidrv_eusart_SPI_SM15135E_handle, sm15135e_reset_buf, sizeof(sm15135e_reset_buf));
+    sm15135e_bus_lock();
+    (void) sm15135e_spi_transmit(sm15135e_reset_buf, sizeof(sm15135e_reset_buf));
+    sm15135e_bus_unlock();
 }
 
 void sm15135e_init(void)
 {
     sm15135e_spi_init_once();
-    // 额外挂起确保引脚处于稳定的 Idle 状态
     osDelay(2);
     sm15135e_send_reset();
 }
 
-void sm15135e_send_frame(const sm15135e_pixel_t *p)
+void sm15135e_send_frame(const sm15135e_pixel_t * p)
 {
     if (p == NULL)
     {
         return;
     }
-    sm15135e_spi_init_once();
 
-    size_t                   byte_idx = 0;
-    sm15135e_bit_extractor_t ext;
-
-    // 1. 灰度 5 通道打包
-    uint16_t gray_channels[5] = {p->r, p->g, p->b, p->w, p->y};
-    for (uint8_t i = 0; i < 5; ++i)
-    {
-        ext.val32 = (uint32_t)gray_channels[i];
-
-        // 纯算术级并行压入，没有任何汇编跳转指令（无 BNE/BEQ），流水线跑满
-        sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b15, ext.bits.b14);
-        sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b13, ext.bits.b12);
-        sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b11, ext.bits.b10);
-        sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b9, ext.bits.b8);
-        sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b7, ext.bits.b6);
-        sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b5, ext.bits.b4);
-        sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b3, ext.bits.b2);
-        sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b1, ext.bits.b0);
-    }
-
-    // 2. 增益+模式复合 32位 打包
-    uint32_t pack32 = 0;
-    pack32 |= (uint32_t)(p->gain_r & 0x1Fu) << 27u;
-    pack32 |= (uint32_t)(p->gain_g & 0x1Fu) << 22u;
-    pack32 |= (uint32_t)(p->gain_b & 0x1Fu) << 17u;
-    pack32 |= (uint32_t)(p->gain_w & 0x1Fu) << 12u;
-    pack32 |= (uint32_t)(p->gain_y & 0x1Fu) << 7u;
-    pack32 |= (uint32_t)(p->standby & 0x03u) << 5u;
-    pack32 |= (uint32_t)(p->reserve & 0x1Fu);
-
-    ext.val32 = pack32;
-
-    sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b31, ext.bits.b30);
-    sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b29, ext.bits.b28);
-    sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b27, ext.bits.b26);
-    sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b25, ext.bits.b24);
-    sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b23, ext.bits.b22);
-    sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b21, ext.bits.b20);
-    sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b19, ext.bits.b18);
-    sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b17, ext.bits.b16);
-    sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b15, ext.bits.b14);
-    sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b13, ext.bits.b12);
-    sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b11, ext.bits.b10);
-    sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b9, ext.bits.b8);
-    sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b7, ext.bits.b6);
-    sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b5, ext.bits.b4);
-    sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b3, ext.bits.b2);
-    sm15135e_frame_buf[byte_idx++] = PACK_SPI_BYTE_PURE(ext.bits.b1, ext.bits.b0);
-
-    // 🚀 纯内存到寄存器的算术映射，完工！
-    (void)SPIDRV_MTransmitB(sl_spidrv_eusart_SPI_SM15135E_handle, sm15135e_frame_buf, sizeof(sm15135e_frame_buf));
+    sm15135e_bus_lock();
+    sm15135e_encode_frame(p, sm15135e_frame_buf);
+    (void) sm15135e_spi_transmit(sm15135e_frame_buf, sizeof(sm15135e_frame_buf));
+    sm15135e_bus_unlock();
 }
 
-void sm15135e_send_chain(const sm15135e_pixel_t *pixels, size_t count)
+bool sm15135e_transmit_pixel(const sm15135e_pixel_t * p)
+{
+    if (p == NULL)
+    {
+        return false;
+    }
+
+    sm15135e_bus_lock();
+    sm15135e_encode_frame(p, sm15135e_frame_buf);
+    const bool frameOk = sm15135e_spi_transmit(sm15135e_frame_buf, sizeof(sm15135e_frame_buf));
+    bool ok            = frameOk;
+    if (frameOk)
+    {
+        ok = sm15135e_spi_transmit(sm15135e_reset_buf, sizeof(sm15135e_reset_buf));
+    }
+    sm15135e_bus_unlock();
+    return ok;
+}
+
+void sm15135e_send_chain(const sm15135e_pixel_t * pixels, size_t count)
 {
     if ((pixels == NULL) || (count == 0u))
     {
@@ -170,11 +226,11 @@ void sm15135e_send_chain(const sm15135e_pixel_t *pixels, size_t count)
     }
     for (size_t i = count; i > 0u; --i)
     {
-        sm15135e_send_frame(&pixels[i - 1u]);
+        (void) sm15135e_transmit_pixel(&pixels[i - 1u]);
     }
 }
 
-void sm15135e_set_rgbwy(sm15135e_pixel_t *p, uint16_t r, uint16_t g, uint16_t b, uint16_t w, uint16_t y)
+void sm15135e_set_rgbwy(sm15135e_pixel_t * p, uint16_t r, uint16_t g, uint16_t b, uint16_t w, uint16_t y)
 {
     if (p == NULL)
     {
@@ -187,21 +243,21 @@ void sm15135e_set_rgbwy(sm15135e_pixel_t *p, uint16_t r, uint16_t g, uint16_t b,
     p->y = y;
 }
 
-void sm15135e_set_all_gain(sm15135e_pixel_t *p, uint8_t gain)
+void sm15135e_set_all_gain(sm15135e_pixel_t * p, uint8_t gain)
 {
     if (p == NULL)
     {
         return;
     }
     uint8_t g5 = sm15135e_mask5(gain);
-    p->gain_r = g5;
-    p->gain_g = g5;
-    p->gain_b = g5;
-    p->gain_w = g5;
-    p->gain_y = g5;
+    p->gain_r  = g5;
+    p->gain_g  = g5;
+    p->gain_b  = g5;
+    p->gain_w  = g5;
+    p->gain_y  = g5;
 }
 
-void sm15135e_fill_default(sm15135e_pixel_t *p)
+void sm15135e_fill_default(sm15135e_pixel_t * p)
 {
     if (p == NULL)
     {
@@ -212,7 +268,7 @@ void sm15135e_fill_default(sm15135e_pixel_t *p)
     p->b = 0u;
     p->w = 0u;
     p->y = 0u;
-    sm15135e_set_all_gain(p, SM15135E_GAIN_91_0MA); // 默认 60.7mA 电流
+    sm15135e_set_all_gain(p, SM15135E_GAIN_91_0MA);
     p->standby = SM15135E_STANDBY_NORMAL;
-    p->reserve = 0x1Fu; // 手册强烈建议全填 1
+    p->reserve = 0x1Fu;
 }

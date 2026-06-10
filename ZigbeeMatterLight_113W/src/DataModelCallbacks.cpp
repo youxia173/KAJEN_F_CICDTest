@@ -81,11 +81,21 @@ struct RgbwFadeState
 
 static RgbwFadeState g_rgbwFade = { false, 0, 50, 0, 0, 0, 0, 0, 0, 0, 0 };
 static osTimerId_t g_rgbwFadeTimer = nullptr;
+static osTimerId_t g_powMemSaveTimer = nullptr;
+static osTimerId_t g_attrFadeCoalesceTimer = nullptr;
+static bool g_attrFadePending = false;
+static uint16_t g_attrFadeR = 0;
+static uint16_t g_attrFadeG = 0;
+static uint16_t g_attrFadeB = 0;
+static uint16_t g_attrFadeWPermille = 0;
+static bool g_powMemSavePending = false;
+static constexpr uint32_t kPowMemSaveDebounceMs = 1000u;
 static constexpr uint32_t kRgbwFadeStepMs = 20;
 static constexpr uint16_t kFadeStepsMin = 6;   // 120ms
 static constexpr uint16_t kFadeStepsMax = 50;  // 1000ms
 static constexpr uint32_t kFadeRetargetMinMs = 80;
 static constexpr uint8_t kFadeRetargetMinDeltaRgb = 2;
+static constexpr uint32_t kAttrFadeCoalesceMs = 40u;
 static uint32_t g_lastFadeRetargetTick = 0;
 static uint16_t g_lastAppliedR = 0;
 static uint16_t g_lastAppliedG = 0;
@@ -99,6 +109,16 @@ static bool g_sm15135e_inited = false;
 static uint16_t Scale8To16(uint8_t v)
 {
     return static_cast<uint16_t>(v) * 257u;
+}
+
+static uint16_t NormalizeRgbInputTo16(uint16_t v)
+{
+    return (v <= 255u) ? Scale8To16(static_cast<uint8_t>(v)) : v;
+}
+
+static uint8_t Rgb16To8(uint16_t v16)
+{
+    return static_cast<uint8_t>((static_cast<uint32_t>(v16) * 255u + 32767u) / 65535u);
 }
 
 // 白光 PWM：硬件 timer compare 分辨率 ≈ top+1 档（15kHz 下 top≈1333，约 1334 级）。
@@ -196,15 +216,15 @@ static void GetCurrentRgbw(uint16_t * r, uint16_t * g, uint16_t * b, uint8_t * w
 {
     if (r != nullptr)
     {
-        *r = g_hasLastApplied ? g_lastAppliedR : 0u;
+        *r = g_hasLastApplied ? Rgb16To8(g_lastAppliedR) : 0u;
     }
     if (g != nullptr)
     {
-        *g = g_hasLastApplied ? g_lastAppliedG : 0u;
+        *g = g_hasLastApplied ? Rgb16To8(g_lastAppliedG) : 0u;
     }
     if (b != nullptr)
     {
-        *b = g_hasLastApplied ? g_lastAppliedB : 0u;
+        *b = g_hasLastApplied ? Rgb16To8(g_lastAppliedB) : 0u;
     }
     if (wDuty != nullptr)
     {
@@ -281,8 +301,10 @@ static void ApplyRgbLevelNow(uint8_t level254)
     uint16_t outR = 0, outG = 0, outB = 0;
     MapLogicalToSm15135eRgb16(r16, g16, b16, &outR, &outG, &outB);
     sm15135e_set_rgbwy(&g_sm15135e_pixel, outR, outG, outB, 0u, 0u);
-    sm15135e_send_frame(&g_sm15135e_pixel);
-    sm15135e_send_reset();
+    if (!sm15135e_transmit_pixel(&g_sm15135e_pixel))
+    {
+        return;
+    }
 
     g_lastAppliedR = r16;
     g_lastAppliedG = g16;
@@ -310,13 +332,13 @@ static constexpr float kXyGainB = 1.0f;
 
 static void ApplyRgbwOutput(uint16_t r, uint16_t g, uint16_t b, uint32_t wCompare)
 {
-    const uint8_t r8 = static_cast<uint8_t>(r > 255u ? 255u : r);
-    const uint8_t g8 = static_cast<uint8_t>(g > 255u ? 255u : g);
-    const uint8_t b8 = static_cast<uint8_t>(b > 255u ? 255u : b);
+    const uint16_t r16       = NormalizeRgbInputTo16(r);
+    const uint16_t g16       = NormalizeRgbInputTo16(g);
+    const uint16_t b16       = NormalizeRgbInputTo16(b);
     const uint16_t wPermille = WhiteCompareToPermille(wCompare);
 
     const bool rgbChanged =
-        !g_hasLastApplied || g_lastAppliedR != r8 || g_lastAppliedG != g8 || g_lastAppliedB != b8;
+        !g_hasLastApplied || g_lastAppliedR != r16 || g_lastAppliedG != g16 || g_lastAppliedB != b16;
     const bool wChanged = !g_hasLastApplied || g_lastAppliedWhiteCompare != wCompare;
 
     if (!rgbChanged && !wChanged)
@@ -324,25 +346,58 @@ static void ApplyRgbwOutput(uint16_t r, uint16_t g, uint16_t b, uint32_t wCompar
         return;
     }
 
+    // [FLK] Discontinuity detector: at the single hardware output funnel, flag any
+    // applied value that jumps more than a smooth fade step would. A clean fade moves
+    // <~13/255 per RGB channel per 20ms step; a large jump here means a competing
+    // writer/retarget or a corrupted frame (the visible flicker fingerprint).
+    if (g_hasLastApplied)
+    {
+        const uint8_t prevR8 = Rgb16To8(g_lastAppliedR);
+        const uint8_t prevG8 = Rgb16To8(g_lastAppliedG);
+        const uint8_t prevB8 = Rgb16To8(g_lastAppliedB);
+        const uint8_t newR8  = Rgb16To8(r16);
+        const uint8_t newG8  = Rgb16To8(g16);
+        const uint8_t newB8  = Rgb16To8(b16);
+        const int dR = static_cast<int>(newR8) - static_cast<int>(prevR8);
+        const int dG = static_cast<int>(newG8) - static_cast<int>(prevG8);
+        const int dB = static_cast<int>(newB8) - static_cast<int>(prevB8);
+        const int aR = dR < 0 ? -dR : dR;
+        const int aG = dG < 0 ? -dG : dG;
+        const int aB = dB < 0 ? -dB : dB;
+        const int dWp = static_cast<int>(wPermille) - static_cast<int>(g_lastAppliedWPermille);
+        const int aWp = dWp < 0 ? -dWp : dWp;
+        if (aR > 40 || aG > 40 || aB > 40 || aWp > 150)
+        {
+            ChipLogError(Zcl, "[FLK] jump rgb %u,%u,%u->%u,%u,%u (d=%d,%d,%d) wpm %u->%u fade=%u step=%u/%u",
+                         static_cast<unsigned>(prevR8), static_cast<unsigned>(prevG8), static_cast<unsigned>(prevB8),
+                         static_cast<unsigned>(newR8), static_cast<unsigned>(newG8), static_cast<unsigned>(newB8),
+                         dR, dG, dB, static_cast<unsigned>(g_lastAppliedWPermille), static_cast<unsigned>(wPermille),
+                         static_cast<unsigned>(g_rgbwFade.active ? 1u : 0u),
+                         static_cast<unsigned>(g_rgbwFade.step), static_cast<unsigned>(g_rgbwFade.totalSteps));
+        }
+    }
+
+    if (wChanged)
+    {
+        ApplyWhitePwmCompare(wCompare);
+    }
+
     if (rgbChanged)
     {
         Sm15135eEnsureInit();
 
         uint16_t outR = 0, outG = 0, outB = 0;
-        MapLogicalToSm15135eRgb(r8, g8, b8, &outR, &outG, &outB);
+        MapLogicalToSm15135eRgb16(r16, g16, b16, &outR, &outG, &outB);
         sm15135e_set_rgbwy(&g_sm15135e_pixel, outR, outG, outB, 0u, 0u);
-        sm15135e_send_frame(&g_sm15135e_pixel);
-        sm15135e_send_reset();
+        if (!sm15135e_transmit_pixel(&g_sm15135e_pixel))
+        {
+            return;
+        }
     }
 
-    if (wChanged || (wCompare == 0u))
-    {
-        ApplyWhitePwmCompare(wCompare);
-    }
-
-    g_lastAppliedR = r8;
-    g_lastAppliedG = g8;
-    g_lastAppliedB = b8;
+    g_lastAppliedR = r16;
+    g_lastAppliedG = g16;
+    g_lastAppliedB = b16;
     g_lastAppliedWPermille = wPermille;
     g_hasLastApplied = true;
 }
@@ -389,6 +444,14 @@ static uint16_t ComputeFadeSteps(uint32_t durationMs)
     return steps;
 }
 
+static void InterpolateFadeRgb(uint16_t startR, uint16_t startG, uint16_t startB, uint16_t targetR, uint16_t targetG,
+                               uint16_t targetB, float t, uint16_t & rOut, uint16_t & gOut, uint16_t & bOut);
+static void GetFadePositionRgbw(uint16_t * r, uint16_t * g, uint16_t * b, uint16_t * wPermille);
+static void StartRgbwFade(uint16_t targetR, uint16_t targetG, uint16_t targetB, uint16_t targetWPermille,
+                          uint32_t durationMs);
+static void ScheduleAttrRgbwFade(uint16_t targetR, uint16_t targetG, uint16_t targetB, uint16_t targetWPermille,
+                                 uint32_t durationMs);
+
 static void RgbwFadeTimerCallback(void * context)
 {
     (void) context;
@@ -401,7 +464,8 @@ static void RgbwFadeTimerCallback(void * context)
     if (g_rgbwFade.step >= g_rgbwFade.totalSteps)
     {
         g_rgbwFade.active = false;
-        ApplyRgbwNowPermille(g_rgbwFade.targetR, g_rgbwFade.targetG, g_rgbwFade.targetB, g_rgbwFade.targetWPermille);
+        ApplyRgbwOutput(g_rgbwFade.targetR, g_rgbwFade.targetG, g_rgbwFade.targetB,
+                        WhitePermilleToCompare(g_rgbwFade.targetWPermille));
         osTimerStop(g_rgbwFadeTimer);
         return;
     }
@@ -409,16 +473,13 @@ static void RgbwFadeTimerCallback(void * context)
     g_rgbwFade.step++;
     const uint32_t s = g_rgbwFade.step;
     const uint32_t n = g_rgbwFade.totalSteps;
+    const float t    = static_cast<float>(s) / static_cast<float>(n);
 
-    const uint16_t r = static_cast<uint16_t>(g_rgbwFade.startR +
-        ((static_cast<int32_t>(g_rgbwFade.targetR) - static_cast<int32_t>(g_rgbwFade.startR)) * static_cast<int32_t>(s)) /
-            static_cast<int32_t>(n));
-    const uint16_t g = static_cast<uint16_t>(g_rgbwFade.startG +
-        ((static_cast<int32_t>(g_rgbwFade.targetG) - static_cast<int32_t>(g_rgbwFade.startG)) * static_cast<int32_t>(s)) /
-            static_cast<int32_t>(n));
-    const uint16_t b = static_cast<uint16_t>(g_rgbwFade.startB +
-        ((static_cast<int32_t>(g_rgbwFade.targetB) - static_cast<int32_t>(g_rgbwFade.startB)) * static_cast<int32_t>(s)) /
-            static_cast<int32_t>(n));
+    uint16_t r = 0;
+    uint16_t g = 0;
+    uint16_t b = 0;
+    InterpolateFadeRgb(g_rgbwFade.startR, g_rgbwFade.startG, g_rgbwFade.startB, g_rgbwFade.targetR, g_rgbwFade.targetG,
+                       g_rgbwFade.targetB, t, r, g, b);
     const uint32_t startCmp = WhitePermilleToCompare(g_rgbwFade.startWPermille);
     const uint32_t targetCmp = WhitePermilleToCompare(g_rgbwFade.targetWPermille);
     const uint32_t wCompare = static_cast<uint32_t>(static_cast<int32_t>(startCmp) +
@@ -441,14 +502,16 @@ static void StartRgbwFade(uint16_t targetR, uint16_t targetG, uint16_t targetB, 
         g_rgbwFadeTimer = osTimerNew(RgbwFadeTimerCallback, osTimerPeriodic, nullptr, nullptr);
         if (g_rgbwFadeTimer == nullptr)
         {
-            ApplyRgbwNowPermille(targetR, targetG, targetB, targetWPermille);
+            ApplyRgbwOutput(targetR, targetG, targetB, WhitePermilleToCompare(targetWPermille));
             return;
         }
     }
 
-    uint16_t curR = 0, curG = 0, curB = 0;
-    const uint16_t curWPermille = g_hasLastApplied ? g_lastAppliedWPermille : 0u;
-    GetCurrentRgbw(&curR, &curG, &curB, nullptr);
+    uint16_t curR = 0;
+    uint16_t curG = 0;
+    uint16_t curB = 0;
+    uint16_t curWPermille = 0;
+    GetFadePositionRgbw(&curR, &curG, &curB, &curWPermille);
 
     const uint16_t dR = (curR > targetR) ? static_cast<uint16_t>(curR - targetR) : static_cast<uint16_t>(targetR - curR);
     const uint16_t dG = (curG > targetG) ? static_cast<uint16_t>(curG - targetG) : static_cast<uint16_t>(targetG - curG);
@@ -457,48 +520,85 @@ static void StartRgbwFade(uint16_t targetR, uint16_t targetG, uint16_t targetB, 
     const uint32_t targetCmp = WhitePermilleToCompare(targetWPermille);
     const uint32_t dWcmp = (curCmp > targetCmp) ? (curCmp - targetCmp) : (targetCmp - curCmp);
 
-    // Tiny low-level adjustments cause visible shimmer when frequently retargeted.
     if (dR <= kFadeRetargetMinDeltaRgb && dG <= kFadeRetargetMinDeltaRgb && dB <= kFadeRetargetMinDeltaRgb &&
         dWcmp <= 1u)
     {
-        ApplyRgbwNowPermille(targetR, targetG, targetB, targetWPermille);
+        ApplyRgbwOutput(targetR, targetG, targetB, targetCmp);
         g_rgbwFade.active = false;
         osTimerStop(g_rgbwFadeTimer);
         return;
     }
 
-    const uint32_t nowTick = osKernelGetTickCount();
-    if (g_rgbwFade.active)
-    {
-        const uint32_t elapsed = nowTick - g_lastFadeRetargetTick;
-        if (elapsed < kFadeRetargetMinMs)
-        {
-            g_rgbwFade.targetR = targetR;
-            g_rgbwFade.targetG = targetG;
-            g_rgbwFade.targetB = targetB;
-            g_rgbwFade.targetWPermille = targetWPermille;
-            return;
-        }
-    }
-
-    g_rgbwFade.active = true;
-    g_rgbwFade.step = 0;
-    g_rgbwFade.startR = curR;
-    g_rgbwFade.startG = curG;
-    g_rgbwFade.startB = curB;
-    g_rgbwFade.startWPermille = curWPermille;
-    g_rgbwFade.targetR = targetR;
-    g_rgbwFade.targetG = targetG;
-    g_rgbwFade.targetB = targetB;
-    g_rgbwFade.targetWPermille = targetWPermille;
     if (durationMs == 0u)
     {
         durationMs = APP_COLOR_FADE_MS;
     }
-    g_rgbwFade.totalSteps = ComputeFadeSteps(durationMs);
-    g_lastFadeRetargetTick = nowTick;
+
+    const uint32_t nowTick = osKernelGetTickCount();
+    if (g_rgbwFade.active && ((nowTick - g_lastFadeRetargetTick) < kFadeRetargetMinMs))
+    {
+        g_rgbwFade.targetR         = targetR;
+        g_rgbwFade.targetG         = targetG;
+        g_rgbwFade.targetB         = targetB;
+        g_rgbwFade.targetWPermille = targetWPermille;
+        return;
+    }
+
+    g_rgbwFade.active           = true;
+    g_rgbwFade.step             = 0;
+    g_rgbwFade.startR           = curR;
+    g_rgbwFade.startG           = curG;
+    g_rgbwFade.startB           = curB;
+    g_rgbwFade.startWPermille   = curWPermille;
+    g_rgbwFade.targetR          = targetR;
+    g_rgbwFade.targetG          = targetG;
+    g_rgbwFade.targetB          = targetB;
+    g_rgbwFade.targetWPermille  = targetWPermille;
+    g_rgbwFade.totalSteps       = ComputeFadeSteps(durationMs);
+    g_lastFadeRetargetTick      = nowTick;
 
     osTimerStart(g_rgbwFadeTimer, kRgbwFadeStepMs);
+}
+
+static void AttrFadeCoalesceTimerCallback(void * context)
+{
+    (void) context;
+    if (!g_attrFadePending)
+    {
+        return;
+    }
+
+    g_attrFadePending = false;
+    StartRgbwFade(g_attrFadeR, g_attrFadeG, g_attrFadeB, g_attrFadeWPermille, APP_COLOR_FADE_MS);
+}
+
+static void ScheduleAttrRgbwFade(uint16_t targetR, uint16_t targetG, uint16_t targetB, uint16_t targetWPermille,
+                                 uint32_t durationMs)
+{
+    if (targetWPermille > kWhitePermilleMax)
+    {
+        targetWPermille = kWhitePermilleMax;
+    }
+
+    g_attrFadeR         = targetR;
+    g_attrFadeG         = targetG;
+    g_attrFadeB         = targetB;
+    g_attrFadeWPermille = targetWPermille;
+    g_attrFadePending   = true;
+
+    if (g_attrFadeCoalesceTimer == nullptr)
+    {
+        g_attrFadeCoalesceTimer = osTimerNew(AttrFadeCoalesceTimerCallback, osTimerOnce, nullptr, nullptr);
+        if (g_attrFadeCoalesceTimer == nullptr)
+        {
+            g_attrFadePending = false;
+            StartRgbwFade(targetR, targetG, targetB, targetWPermille, durationMs);
+            return;
+        }
+    }
+
+    (void) osTimerStop(g_attrFadeCoalesceTimer);
+    (void) osTimerStart(g_attrFadeCoalesceTimer, kAttrFadeCoalesceMs);
 }
 
 static uint8_t Level254To255(uint8_t level254)
@@ -546,6 +646,10 @@ static uint8_t LevelQ16To255(int32_t levelQ16)
 
 static void ApplyOutputFromLevelQ16(int32_t levelQ16)
 {
+    // Long-press dimming drives the hardware directly at full 16-bit precision (no 8-bit
+    // stair-steps). It must run at a high refresh rate: at ~33fps (30ms ticks) the per-frame
+    // refresh is visible as flicker; the dimming tick period is therefore kept at 20ms (50fps)
+    // in AppConfig.h, matching the color fade timer which is already flicker-free.
     CancelRgbwFade();
 
     if (g_buttonPresetActive)
@@ -620,6 +724,222 @@ static float Clamp01(float v)
         return 1.0f;
     }
     return v;
+}
+
+static uint8_t ClampU8FromU16(uint16_t v)
+{
+    return static_cast<uint8_t>(v > 255u ? 255u : v);
+}
+
+static void RgbToHsv(uint8_t r, uint8_t g, uint8_t b, float & h, float & s, float & v)
+{
+    const float rf   = static_cast<float>(r) / 255.0f;
+    const float gf   = static_cast<float>(g) / 255.0f;
+    const float bf   = static_cast<float>(b) / 255.0f;
+    const float maxc = fmaxf(rf, fmaxf(gf, bf));
+    const float minc = fminf(rf, fminf(gf, bf));
+    const float delta = maxc - minc;
+
+    v = maxc;
+    if (maxc <= 0.0001f)
+    {
+        h = 0.0f;
+        s = 0.0f;
+        return;
+    }
+
+    s = delta / maxc;
+    if (delta <= 0.0001f)
+    {
+        h = 0.0f;
+        return;
+    }
+
+    if (maxc == rf)
+    {
+        h = 60.0f * fmodf((gf - bf) / delta + 6.0f, 6.0f);
+    }
+    else if (maxc == gf)
+    {
+        h = 60.0f * (((bf - rf) / delta) + 2.0f);
+    }
+    else
+    {
+        h = 60.0f * (((rf - gf) / delta) + 4.0f);
+    }
+}
+
+static void HsvToRgb(float h, float s, float v, uint8_t & r, uint8_t & g, uint8_t & b)
+{
+    if (s <= 0.0001f)
+    {
+        const uint8_t c = static_cast<uint8_t>(Clamp01(v) * 255.0f + 0.5f);
+        r               = c;
+        g               = c;
+        b               = c;
+        return;
+    }
+
+    h = fmodf(h, 360.0f);
+    if (h < 0.0f)
+    {
+        h += 360.0f;
+    }
+
+    const float hf = h / 60.0f;
+    const int i    = static_cast<int>(hf);
+    const float f  = hf - static_cast<float>(i);
+    const float p  = v * (1.0f - s);
+    const float q  = v * (1.0f - s * f);
+    const float t  = v * (1.0f - s * (1.0f - f));
+
+    float rf = 0.0f;
+    float gf = 0.0f;
+    float bf = 0.0f;
+    switch (i % 6)
+    {
+    case 0:
+        rf = v;
+        gf = t;
+        bf = p;
+        break;
+    case 1:
+        rf = q;
+        gf = v;
+        bf = p;
+        break;
+    case 2:
+        rf = p;
+        gf = v;
+        bf = t;
+        break;
+    case 3:
+        rf = p;
+        gf = q;
+        bf = v;
+        break;
+    case 4:
+        rf = t;
+        gf = p;
+        bf = v;
+        break;
+    default:
+        rf = v;
+        gf = p;
+        bf = q;
+        break;
+    }
+
+    r = static_cast<uint8_t>(Clamp01(rf) * 255.0f + 0.5f);
+    g = static_cast<uint8_t>(Clamp01(gf) * 255.0f + 0.5f);
+    b = static_cast<uint8_t>(Clamp01(bf) * 255.0f + 0.5f);
+}
+
+static float LerpHueShortest(float h0, float h1, float t)
+{
+    float d = h1 - h0;
+    if (d > 180.0f)
+    {
+        d -= 360.0f;
+    }
+    if (d < -180.0f)
+    {
+        d += 360.0f;
+    }
+
+    float h = h0 + d * t;
+    if (h < 0.0f)
+    {
+        h += 360.0f;
+    }
+    if (h >= 360.0f)
+    {
+        h -= 360.0f;
+    }
+    return h;
+}
+
+static void InterpolateFadeRgb(uint16_t startR, uint16_t startG, uint16_t startB, uint16_t targetR, uint16_t targetG,
+                               uint16_t targetB, float t, uint16_t & rOut, uint16_t & gOut, uint16_t & bOut)
+{
+    const uint8_t sr = ClampU8FromU16(startR);
+    const uint8_t sg = ClampU8FromU16(startG);
+    const uint8_t sb = ClampU8FromU16(startB);
+    const uint8_t tr = ClampU8FromU16(targetR);
+    const uint8_t tg = ClampU8FromU16(targetG);
+    const uint8_t tb = ClampU8FromU16(targetB);
+
+    float h0 = 0.0f;
+    float s0 = 0.0f;
+    float v0 = 0.0f;
+    float h1 = 0.0f;
+    float s1 = 0.0f;
+    float v1 = 0.0f;
+    RgbToHsv(sr, sg, sb, h0, s0, v0);
+    RgbToHsv(tr, tg, tb, h1, s1, v1);
+
+    if (s0 <= 0.0001f && s1 > 0.0001f)
+    {
+        h0 = h1;
+    }
+    else if (s1 <= 0.0001f && s0 > 0.0001f)
+    {
+        h1 = h0;
+    }
+
+    const float h   = LerpHueShortest(h0, h1, t);
+    const float sat = s0 + (s1 - s0) * t;
+    const float val = v0 + (v1 - v0) * t;
+
+    uint8_t r8 = 0;
+    uint8_t g8 = 0;
+    uint8_t b8 = 0;
+    HsvToRgb(h, sat, val, r8, g8, b8);
+    rOut = r8;
+    gOut = g8;
+    bOut = b8;
+}
+
+static void GetFadePositionRgbw(uint16_t * r, uint16_t * g, uint16_t * b, uint16_t * wPermille)
+{
+    if (g_rgbwFade.active && g_rgbwFade.totalSteps > 0u)
+    {
+        const float t = static_cast<float>(g_rgbwFade.step) / static_cast<float>(g_rgbwFade.totalSteps);
+        uint16_t rOut = 0;
+        uint16_t gOut = 0;
+        uint16_t bOut = 0;
+        InterpolateFadeRgb(g_rgbwFade.startR, g_rgbwFade.startG, g_rgbwFade.startB, g_rgbwFade.targetR,
+                           g_rgbwFade.targetG, g_rgbwFade.targetB, t, rOut, gOut, bOut);
+        if (r != nullptr)
+        {
+            *r = rOut;
+        }
+        if (g != nullptr)
+        {
+            *g = gOut;
+        }
+        if (b != nullptr)
+        {
+            *b = bOut;
+        }
+        if (wPermille != nullptr)
+        {
+            const uint32_t startCmp  = WhitePermilleToCompare(g_rgbwFade.startWPermille);
+            const uint32_t targetCmp = WhitePermilleToCompare(g_rgbwFade.targetWPermille);
+            const uint32_t cmp       = static_cast<uint32_t>(static_cast<int32_t>(startCmp) +
+                ((static_cast<int32_t>(targetCmp) - static_cast<int32_t>(startCmp)) *
+                 static_cast<int32_t>(g_rgbwFade.step)) /
+                    static_cast<int32_t>(g_rgbwFade.totalSteps));
+            *wPermille = WhiteCompareToPermille(cmp);
+        }
+        return;
+    }
+
+    GetCurrentRgbw(r, g, b, nullptr);
+    if (wPermille != nullptr)
+    {
+        *wPermille = g_hasLastApplied ? g_lastAppliedWPermille : 0u;
+    }
 }
 
 static float GammaCorrect(float v)
@@ -1099,12 +1419,11 @@ static void FillPowerOnRgbwFromLevel254(uint8_t level254, uint8_t & rOut, uint8_
     }
     else if (g_isColorTempMode)
     {
-        uint16_t mireds = g_colorTempMireds;
-        uint8_t r = 0;
-        uint8_t g = 0;
-        uint8_t b = 0;
-        uint16_t wPermille = 0;
-        ColorControl::Attributes::ColorTemperatureMireds::Get(1, &mireds);
+        uint16_t mireds    = g_colorTempMireds;
+        uint8_t r            = 0;
+        uint8_t g            = 0;
+        uint8_t b            = 0;
+        uint16_t wPermille   = 0;
         ComputeCtRgbw(mireds, level254, r, g, b, wPermille);
         rOut = r;
         gOut = g;
@@ -1121,10 +1440,10 @@ static void FillPowerOnRgbwFromLevel254(uint8_t level254, uint8_t & rOut, uint8_
     }
 }
 
-extern "C" void MatterSavePowerOnMemorySnapshot()
+static void WritePowerOnMemorySnapshot(void)
 {
     PowerOnMemoryState state = {};
-    state.version = kPowerOnMemoryVersion;
+    state.version            = kPowerOnMemoryVersion;
 
     chip::DeviceLayer::PlatformMgr().LockChipStack();
     app::DataModel::Nullable<uint8_t> level;
@@ -1132,7 +1451,7 @@ extern "C" void MatterSavePowerOnMemorySnapshot()
         !level.IsNull())
     {
         state.level = level.Value();
-        g_memLevel = level.Value();
+        g_memLevel  = level.Value();
     }
     else
     {
@@ -1143,7 +1462,7 @@ extern "C" void MatterSavePowerOnMemorySnapshot()
     if (OnOff::Attributes::OnOff::Get(1, &onOff) == chip::Protocols::InteractionModel::Status::Success)
     {
         state.onOff = onOff ? 1u : 0u;
-        g_memOnOff = state.onOff;
+        g_memOnOff  = state.onOff;
     }
     else
     {
@@ -1151,23 +1470,23 @@ extern "C" void MatterSavePowerOnMemorySnapshot()
     }
 
     state.level = ResolvePersistLevel254(state.level, state.onOff);
-    g_memLevel = state.level;
-    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+    g_memLevel  = state.level;
 
     if (state.onOff == 0u)
     {
-        // Keep off-state deterministic across reboot.
-        state.r = 0u;
-        state.g = 0u;
-        state.b = 0u;
-        state.wDuty = 0u;
+        state.r         = 0u;
+        state.g         = 0u;
+        state.b         = 0u;
+        state.wDuty     = 0u;
+        state.colorSource = g_colorSource;
     }
     else
     {
         FillPowerOnRgbwFromLevel254(state.level, state.r, state.g, state.b, state.wDuty);
+        state.colorSource = g_colorSource;
     }
 
-    state.colorSource = g_colorSource;
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
 
     CHIP_ERROR err = chip::DeviceLayer::PersistedStorage::KeyValueStoreMgr().Put(kPowerOnMemoryKey, &state, sizeof(state));
     if (err != CHIP_NO_ERROR)
@@ -1179,9 +1498,42 @@ extern "C" void MatterSavePowerOnMemorySnapshot()
     {
         ChipLogError(Zcl, "[DIM] power-on memory saved: on=%u level=%u w=%u preset=%u ct=%u",
                      static_cast<unsigned>(state.onOff), static_cast<unsigned>(state.level),
-                     static_cast<unsigned>(state.wDuty),
-                     static_cast<unsigned>(g_buttonPresetActive ? 1u : 0u),
+                     static_cast<unsigned>(state.wDuty), static_cast<unsigned>(g_buttonPresetActive ? 1u : 0u),
                      static_cast<unsigned>(g_isColorTempMode ? 1u : 0u));
+    }
+}
+
+static void PowMemSaveWorkHandler(intptr_t arg)
+{
+    (void) arg;
+    WritePowerOnMemorySnapshot();
+}
+
+static void PowMemSaveTimerCallback(void * context)
+{
+    (void) context;
+    if (!g_powMemSavePending)
+    {
+        return;
+    }
+
+    g_powMemSavePending = false;
+    (void) chip::DeviceLayer::PlatformMgr().ScheduleWork(PowMemSaveWorkHandler, 0);
+}
+
+extern "C" void MatterSavePowerOnMemorySnapshot()
+{
+    g_powMemSavePending = true;
+
+    if (g_powMemSaveTimer == nullptr)
+    {
+        g_powMemSaveTimer = osTimerNew(PowMemSaveTimerCallback, osTimerOnce, nullptr, nullptr);
+    }
+
+    if (g_powMemSaveTimer != nullptr)
+    {
+        (void) osTimerStop(g_powMemSaveTimer);
+        (void) osTimerStart(g_powMemSaveTimer, kPowMemSaveDebounceMs);
     }
 }
 
@@ -1316,7 +1668,7 @@ extern "C" void MatterSetButtonPresetPwmWithFade(uint16_t wPermille, uint16_t rP
     g_buttonPresetActive = true;
     g_colorSource = 1u;
 
-    const uint8_t level255 = Level254To255(level254);
+    const uint8_t level255       = Level254To255(level254);
     const uint16_t levelPermille = Level254ToPermille(level254);
 
     const uint16_t r = static_cast<uint16_t>((static_cast<uint32_t>(rPermille) * static_cast<uint32_t>(level255)) / 1000u);
@@ -1327,6 +1679,11 @@ extern "C" void MatterSetButtonPresetPwmWithFade(uint16_t wPermille, uint16_t rP
             ? kWhitePermilleMax
             : ((static_cast<uint32_t>(wPermille) * static_cast<uint32_t>(levelPermille) + 500u) / 1000u));
 
+    g_attrFadePending = false;
+    if (g_attrFadeCoalesceTimer != nullptr)
+    {
+        (void) osTimerStop(g_attrFadeCoalesceTimer);
+    }
     StartRgbwFade(r, g, b, wOutPermille, APP_COLOR_FADE_MS);
     ChipLogError(Zcl, "[DIM] button preset pwm fade: W=%u R=%u G=%u B=%u level=%u",
                  static_cast<unsigned>(wPermille), static_cast<unsigned>(rPermille),
@@ -1456,12 +1813,14 @@ static void RestoreMatterLevel254(uint8_t level254)
 
 static void ApplyLevel254Hardware(uint8_t level254)
 {
-    // App MoveToLevel 会连续更新 CurrentLevel；取消设备侧渐变，避免与 App 渐变叠加闪烁。
-    CancelRgbwFade();
-
     if (g_buttonPresetActive)
     {
-        ApplyButtonPresetByLevel(level254);
+        uint16_t r = 0;
+        uint16_t g = 0;
+        uint16_t b = 0;
+        uint16_t wPermille = 0;
+        ComputePresetRgbw(level254, r, g, b, wPermille);
+        StartRgbwFade(r, g, b, wPermille, APP_COLOR_FADE_MS);
     }
     else if (g_isColorTempMode)
     {
@@ -1470,13 +1829,16 @@ static void ApplyLevel254Hardware(uint8_t level254)
         uint8_t gOut = 0;
         uint8_t bOut = 0;
         uint16_t wPermille = 0;
-        ColorControl::Attributes::ColorTemperatureMireds::Get(1, &mireds);
         ComputeCtRgbw(mireds, level254, rOut, gOut, bOut, wPermille);
-        ApplyRgbwNowPermille(rOut, gOut, bOut, wPermille);
+        ScheduleAttrRgbwFade(rOut, gOut, bOut, wPermille, APP_COLOR_FADE_MS);
     }
     else
     {
-        ApplyRgbLevelNow(level254);
+        const uint8_t level255 = Level254To255(level254);
+        const uint8_t r        = static_cast<uint8_t>((static_cast<uint16_t>(g_rgbTargetR) * level255) / 255u);
+        const uint8_t g        = static_cast<uint8_t>((static_cast<uint16_t>(g_rgbTargetG) * level255) / 255u);
+        const uint8_t b        = static_cast<uint8_t>((static_cast<uint16_t>(g_rgbTargetB) * level255) / 255u);
+        ScheduleAttrRgbwFade(r, g, b, 0, APP_COLOR_FADE_MS);
     }
 }
 
@@ -1676,7 +2038,7 @@ void MatterPostAttributeChangeCallback(const chip::app::ConcreteAttributePath & 
             uint8_t bOut = 0;
             uint16_t wPermille = 0;
             ComputeCtRgbw(mireds, level254, rOut, gOut, bOut, wPermille);
-            StartRgbwFade(rOut, gOut, bOut, wPermille, APP_COLOR_FADE_MS);
+            ScheduleAttrRgbwFade(rOut, gOut, bOut, wPermille, APP_COLOR_FADE_MS);
             ChipLogError(Zcl, "[DIM] mode=ColorTemp mireds=%u level254=%u rgbw=%u,%u,%u,%u",
                          static_cast<unsigned>(mireds), static_cast<unsigned>(level254),
                          static_cast<unsigned>(rOut), static_cast<unsigned>(gOut),
@@ -1765,7 +2127,7 @@ void MatterPostAttributeChangeCallback(const chip::app::ConcreteAttributePath & 
             uint8_t r = (g_rgbTargetR * level) / 255;
             uint8_t g = (g_rgbTargetG * level) / 255;
             uint8_t b = (g_rgbTargetB * level) / 255;
-            StartRgbwFade(r, g, b, 0, APP_COLOR_FADE_MS);
+            ScheduleAttrRgbwFade(r, g, b, 0, APP_COLOR_FADE_MS);
             ChipLogError(Zcl, "[DIM] mode=RGB level=%u rgb=%u,%u,%u", (unsigned)level, r, g, b);
         }
     }
@@ -1879,50 +2241,12 @@ void MatterPostAttributeChangeCallback(const chip::app::ConcreteAttributePath & 
             LightMgr().InitiateAction(AppEvent::kEventType_Light, LightingManager::LEVEL_ACTION, value);
         }
     }
-    // WIP Apply attribute change to Light
-    if (clusterId == ColorControl::Id)
-    {
-        ChipLogProgress(Zcl, "Color Control attribute ID: " ChipLogFormatMEI " Type: %u Value: %u, length %u",
-                        ChipLogValueMEI(attributeId), type, (value != nullptr) ? *value : 0u, size);
-#if (defined(SL_MATTER_RGB_LED_ENABLED) && SL_MATTER_RGB_LED_ENABLED == 1)
-
-        if (clusterId == ColorControl::Id && attributeId == ColorControl::Attributes::CurrentX::Id)
-        {
-            ChipLogProgress(Zcl, "Color Control attribute ID: " ChipLogFormatMEI " Type: %u Value: %u, length %u",
-                            ChipLogValueMEI(attributeId), type, (value != nullptr) ? *value : 0u, size);
-
-            LightMgr().InitiateLightCtrlAction(AppEvent::kEventType_Light, LightingManager::COLOR_ACTION_XY, attributeId, value);
-        }
-        else if (clusterId == ColorControl::Id && attributeId == ColorControl::Attributes::CurrentY::Id)
-        {
-            ChipLogProgress(Zcl, "Color Control attribute ID: " ChipLogFormatMEI " Type: %u Value: %u, length %u",
-                            ChipLogValueMEI(attributeId), type, (value != nullptr) ? *value : 0u, size);
-            LightMgr().InitiateLightCtrlAction(AppEvent::kEventType_Light, LightingManager::COLOR_ACTION_XY, attributeId, value);
-        }
-        if (clusterId == ColorControl::Id && attributeId == ColorControl::Attributes::CurrentHue::Id)
-        {
-            ChipLogProgress(Zcl, "Color Control attribute ID: " ChipLogFormatMEI " Type: %u Value: %u, length %u",
-                            ChipLogValueMEI(attributeId), type, (value != nullptr) ? *value : 0u, size);
-            LightMgr().InitiateLightCtrlAction(AppEvent::kEventType_Light, LightingManager::COLOR_ACTION_HSV, attributeId, value);
-        }
-        else if (clusterId == ColorControl::Id && attributeId == ColorControl::Attributes::CurrentSaturation::Id)
-        {
-            ChipLogProgress(Zcl, "Color Control attribute ID: " ChipLogFormatMEI " Type: %u Value: %u, length %u",
-                            ChipLogValueMEI(attributeId), type, (value != nullptr) ? *value : 0u, size);
-            LightMgr().InitiateLightCtrlAction(AppEvent::kEventType_Light, LightingManager::COLOR_ACTION_HSV, attributeId, value);
-        }
-        else if (attributeId == ColorControl::Attributes::ColorTemperatureMireds::Id)
-        {
-            if (size != sizeof(uint16_t))
-            {
-                ChipLogError(Zcl, "Wrong length for ColorControl value: %d", size);
-                return;
-            }
-            LightMgr().InitiateLightCtrlAction(AppEvent::kEventType_Light, LightingManager::COLOR_ACTION_CT, attributeId, value);
-        }
-#endif // (defined(SL_MATTER_RGB_LED_ENABLED) && SL_MATTER_RGB_LED_ENABLED == 1)
-    }
-    else if (clusterId == 0x0003u)
+    // NOTE: Color output is fully owned by the SM15135E fade path above
+    // (ScheduleAttrRgbwFade / StartRgbwFade). The stock RGBLEDWidget path via
+    // LightMgr().InitiateLightCtrlAction() drives the LED a second time with the
+    // final color immediately (no fade), fighting the fade and causing flicker.
+    // It is intentionally disabled here to keep a single output owner.
+    if (clusterId == 0x0003u)
     {
         ChipLogProgress(Zcl, "Identify attribute ID: " ChipLogFormatMEI " Type: %u Value: %u, length %u",
                         ChipLogValueMEI(attributeId), type, (value != nullptr) ? *value : 0u, size);
