@@ -44,6 +44,7 @@ float floorf(float);
 
 #include <app-common/zap-generated/attributes/Accessors.h>
 #include <app/clusters/on-off-server/on-off-server.h>
+#include <app/reporting/reporting.h>
 #include <app/server/Server.h>
 #include <app/util/attribute-storage.h>
 #include <setup_payload/OnboardingCodesUtil.h>
@@ -112,8 +113,9 @@ extern "C" bool MatterRestorePowerOnMemoryIfAny();
 extern "C" void MatterSavePowerOnMemorySnapshot();
 extern "C" void MatterSetBootOutputSuppress(uint8_t suppress);
 extern "C" void MatterReapplyPowerOnMemoryOutput();
-extern "C" void MatterComputeCtRgbw(uint16_t mireds, uint8_t level254, uint8_t * rOut, uint8_t * gOut, uint8_t * bOut,
-                                     uint8_t * wDutyOut);
+extern "C" void MatterSyncPowerOnAttributesFromMemory();
+extern "C" uint8_t MatterGetIsColorTempMode();
+extern "C" uint16_t MatterGetRuntimeColorTempMireds();
 extern "C" void MatterSetOffTransitionActive(uint8_t active);
 extern "C" void MatterSetButtonDimmingActive(uint8_t active);
 extern "C" void MatterApplyButtonDimmingQ16(int32_t levelQ16, uint8_t levelMin, uint8_t levelMax);
@@ -142,27 +144,33 @@ constexpr uint32_t kLongPressResetSignature = 0x4C505253U; // LPRS
 constexpr uint8_t kLevelMax = APP_LEVEL_MAX;
 constexpr uint8_t kLevelMin = APP_BUTTON_LEVEL_MIN;
 
-struct LightPreset
+// Button preset RGBW table (permille 0~1000 = 0~100%). Hardware output scales by CurrentLevel.
+// ctMireds: Matter ColorControl sync for app (0 = use hue). Does not drive PWM.
+struct ButtonPresetEntry
 {
-    bool isCT;
-    uint16_t param1;
-    uint8_t level;
+    uint16_t wPermille;
+    uint16_t rPermille;
+    uint16_t gPermille;
+    uint16_t bPermille;
+    uint16_t ctMireds;
+    uint8_t hue;
 };
 
-constexpr LightPreset kPresets[13] = {
-    { true, 370, 254 },
-    { true, 455, 254 },
-    { true, 250, 254 },
-    { true, 154, 254 },
-    { false, 28, 127 },
-    { false, 21, 127 },
-    { false, 11, 127 },
-    { false, 247, 229 },
-    { false, 212, 229 },
-    { false, 155, 216 },
-    { false, 113, 229 },
-    { false, 56, 216 },
-    { false, 32, 216 },
+constexpr ButtonPresetEntry kPresets[13] = {       //后面两个CT表用于上报给手机
+    // order, name,   W%,    R%,    G%,    B%
+    { 1000, 0,    0,    0,    370, 0   }, // 1  2700K
+    { 400,  1000, 0,    0,    455, 0   }, // 2  2200K
+    { 400,  0,    230,  550,  250, 0   }, // 3  4000K
+    { 320,  0,    230,  1000, 154, 0   }, // 4  6500K
+    { 0,    1000, 175,  0,    0,   28  }, // 5
+    { 0,    1000, 100,  0,    0,   21  }, // 6
+    { 0,    1000, 0,    0,    0,   11  }, // 7
+    { 0,    1000, 100,  58,   0,   247 }, // 8
+    { 0,    1000, 235,  395,  0,   212 }, // 9
+    { 0,    235,  235,  1000, 0,   155 }, // 10
+    { 0,    510,  825,  510,  0,   113 }, // 11
+    { 0,    510,  1000, 155,  0,   56  }, // 12
+    { 0,    1000, 315,  0,    0,   32  }, // 13
 };
 
 constexpr const char kFactoryResetBootKey[] = "FactoryResetBoot";
@@ -213,6 +221,14 @@ bool sBootBreathingActive = false;
 bool sBootBreathExitPending = false;
 bool sPairSuccessPending = false;
 bool sIdentifyActive = false;
+
+static uint32_t sPairSuccessSessionSeq = 0u;
+static uint8_t sPairSuccessFlashCount = 0u;
+static bool sPairSuccessLastOn = false;
+static uint8_t sCommissioningCompleteCount = 0u;
+static uint32_t sIdentifySessionSeq = 0u;
+static bool sIdentifyLastOn = false;
+static uint8_t sIdentifyFlashCount = 0u;
 
 struct PreEffectState
 {
@@ -266,16 +282,16 @@ static void ApplyWhitePwmEffectPermille(uint16_t levelPermille)
 
 // 渐亮/渐灭正弦缓动查表：80 步 × 10ms = 800ms，值域 0~1000‰（离线预计算，运行时 O(1) 查表）。
 static constexpr uint16_t kBootBreathRampPermilleLut[] = {
-       0,    0,    2,    3,    6,   10,   14,   19,
-      24,   31,   38,   46,   54,   64,   74,   84,
-      95,  107,  120,  133,  146,  161,  175,  190,
-     206,  222,  239,  256,  273,  291,  309,  327,
-     345,  364,  383,  402,  422,  441,  461,  480,
-     500,  520,  539,  559,  578,  598,  617,  636,
-     655,  673,  691,  709,  727,  744,  761,  778,
-     794,  810,  825,  839,  854,  867,  880,  893,
-     905,  916,  926,  936,  946,  954,  962,  969,
-     976,  981,  986,  990,  994,  997,  998, 1000,
+       0,    0,    1,    3,    5,    8,   12,   16,
+      20,   26,   32,   39,   46,   54,   63,   72,
+      82,   93,  104,  116,  128,  141,  155,  169,
+     184,  200,  216,  233,  251,  269,  288,  307,
+     327,  348,  370,  392,  414,  438,  462,  487,
+     513,  538,  562,  586,  608,  630,  652,  673,
+     693,  712,  731,  749,  766,  783,  799,  815,
+     830,  844,  858,  870,  882,  893,  904,  914,
+     924,  933,  941,  948,  955,  961,  967,  972,
+     977,  981,  985,  988,  991,  994,  997, 1000,
 };
 static constexpr uint32_t kBootBreathRampSteps =
     static_cast<uint32_t>(sizeof(kBootBreathRampPermilleLut) / sizeof(kBootBreathRampPermilleLut[0]));
@@ -314,87 +330,138 @@ static bool ShouldSkipEffect(AppTask::EffectMode mode)
         || (mode == AppTask::EffectMode::PairSuccess);
 }
 
-static void HsvToRgb(uint8_t hue, uint8_t sat, uint8_t & r, uint8_t & g, uint8_t & b)
+static void GetPresetBasePermilles(size_t presetIndex, uint16_t & w, uint16_t & r, uint16_t & g, uint16_t & b)
 {
-    const float H = (static_cast<float>(hue) * 360.0f) / 254.0f;
-    const float S = static_cast<float>(sat) / 254.0f;
-    const float V = 1.0f;
-
-    const float Hd = H / 60.0f;
-    int i = static_cast<int>(Hd) % 6;
-    float f = Hd - static_cast<int>(Hd);
-    float p = V * (1.0f - S);
-    float q = V * (1.0f - S * f);
-    float t = V * (1.0f - S * (1.0f - f));
-
-    float rF = 0.0f, gF = 0.0f, bF = 0.0f;
-    switch (i)
+    if (presetIndex >= kPresetCount)
     {
-        case 0: rF = V; gF = t; bF = p; break;
-        case 1: rF = q; gF = V; bF = p; break;
-        case 2: rF = p; gF = V; bF = t; break;
-        case 3: rF = p; gF = q; bF = V; break;
-        case 4: rF = t; gF = p; bF = V; break;
-        case 5: default: rF = V; gF = p; bF = q; break;
-    }
-
-    r = static_cast<uint8_t>(rF * 255.0f);
-    g = static_cast<uint8_t>(gF * 255.0f);
-    b = static_cast<uint8_t>(bF * 255.0f);
-}
-
-static void ComputePresetBasePermilles(const LightPreset & p, uint16_t & w, uint16_t & r, uint16_t & g, uint16_t & b)
-{
-    if (p.isCT)
-    {
-        uint8_t r8 = 0;
-        uint8_t g8 = 0;
-        uint8_t b8 = 0;
-        uint8_t w8 = 0;
-        MatterComputeCtRgbw(p.param1, APP_LEVEL_MAX, &r8, &g8, &b8, &w8);
-        r = static_cast<uint16_t>(r8) * 1000u / 255u;
-        g = static_cast<uint16_t>(g8) * 1000u / 255u;
-        b = static_cast<uint16_t>(b8) * 1000u / 255u;
-        w = static_cast<uint16_t>(w8) * 10u;
+        w = 0;
+        r = 0;
+        g = 0;
+        b = 0;
         return;
     }
 
-    uint8_t r8 = 0;
-    uint8_t g8 = 0;
-    uint8_t b8 = 0;
-    HsvToRgb(static_cast<uint8_t>(p.param1), 254, r8, g8, b8);
-    r = static_cast<uint16_t>(r8) * 1000u / 255u;
-    g = static_cast<uint16_t>(g8) * 1000u / 255u;
-    b = static_cast<uint16_t>(b8) * 1000u / 255u;
-    w = 0;
+    const ButtonPresetEntry & p = kPresets[presetIndex];
+    w = p.wPermille;
+    r = p.rPermille;
+    g = p.gPermille;
+    b = p.bPermille;
 }
 
-static void ComputePresetRgbw(const LightPreset & p, uint8_t level254, uint16_t & w, uint16_t & r, uint16_t & g, uint16_t & b)
+static float SrgbChannelToLinear(uint8_t channel)
 {
-    if (p.isCT)
+    const float v = static_cast<float>(channel) / 255.0f;
+    return (v <= 0.04045f) ? (v / 12.92f) : powf((v + 0.055f) / 1.055f, 2.4f);
+}
+
+static void PermilleRgbToXy(uint16_t rPermille, uint16_t gPermille, uint16_t bPermille, uint16_t & xOut, uint16_t & yOut)
+{
+    const uint8_t r8 = static_cast<uint8_t>((static_cast<uint32_t>(rPermille) * 255u + 500u) / 1000u);
+    const uint8_t g8 = static_cast<uint8_t>((static_cast<uint32_t>(gPermille) * 255u + 500u) / 1000u);
+    const uint8_t b8 = static_cast<uint8_t>((static_cast<uint32_t>(bPermille) * 255u + 500u) / 1000u);
+
+    const float rL = SrgbChannelToLinear(r8);
+    const float gL = SrgbChannelToLinear(g8);
+    const float bL = SrgbChannelToLinear(b8);
+
+    const float X = 0.4124564f * rL + 0.3575761f * gL + 0.1804375f * bL;
+    const float Y = 0.2126729f * rL + 0.7151522f * gL + 0.0721750f * bL;
+    const float Z = 0.0193339f * rL + 0.1191920f * gL + 0.9503041f * bL;
+    const float sum = X + Y + Z;
+    if (sum <= 0.0001f)
     {
-        uint8_t r8 = 0;
-        uint8_t g8 = 0;
-        uint8_t b8 = 0;
-        uint8_t w8 = 0;
-        MatterComputeCtRgbw(p.param1, level254, &r8, &g8, &b8, &w8);
-        r = static_cast<uint16_t>(r8) * 1000u / 255u;
-        g = static_cast<uint16_t>(g8) * 1000u / 255u;
-        b = static_cast<uint16_t>(b8) * 1000u / 255u;
-        w = static_cast<uint16_t>(w8) * 10u;
+        xOut = 0x616B;
+        yOut = 0x607D;
         return;
     }
 
-    uint8_t r8 = 0;
-    uint8_t g8 = 0;
-    uint8_t b8 = 0;
-    HsvToRgb(static_cast<uint8_t>(p.param1), 254, r8, g8, b8);
-    const uint8_t level255 = static_cast<uint8_t>((static_cast<uint16_t>(p.level) * 255u) / 254u);
+    xOut = static_cast<uint16_t>(((X / sum) * 65535.0f) + 0.5f);
+    yOut = static_cast<uint16_t>(((Y / sum) * 65535.0f) + 0.5f);
+}
 
-    r = static_cast<uint16_t>((static_cast<uint32_t>(r8) * level255 + 127u) / 255u);
-    g = static_cast<uint16_t>((static_cast<uint32_t>(g8) * level255 + 127u) / 255u);
-    b = static_cast<uint16_t>((static_cast<uint32_t>(b8) * level255 + 127u) / 255u);
-    w = 0;
+static ColorControl::ColorModeEnum SyncMatterAttributesForPreset(size_t presetIndex)
+{
+    if (presetIndex >= kPresetCount)
+    {
+        return ColorControl::ColorModeEnum::kCurrentXAndCurrentY;
+    }
+
+    const ButtonPresetEntry & p = kPresets[presetIndex];
+    if (p.ctMireds != 0u)
+    {
+        ColorControl::Attributes::ColorMode::Set(LIGHT_ENDPOINT, ColorControl::ColorModeEnum::kColorTemperatureMireds);
+        ColorControl::Attributes::ColorTemperatureMireds::Set(LIGHT_ENDPOINT, p.ctMireds);
+        return ColorControl::ColorModeEnum::kColorTemperatureMireds;
+    }
+
+    uint16_t colorX = 0;
+    uint16_t colorY = 0;
+    PermilleRgbToXy(p.rPermille, p.gPermille, p.bPermille, colorX, colorY);
+    ColorControl::Attributes::ColorMode::Set(LIGHT_ENDPOINT, ColorControl::ColorModeEnum::kCurrentXAndCurrentY);
+    ColorControl::Attributes::CurrentX::Set(LIGHT_ENDPOINT, colorX);
+    ColorControl::Attributes::CurrentY::Set(LIGHT_ENDPOINT, colorY);
+    return ColorControl::ColorModeEnum::kCurrentXAndCurrentY;
+}
+
+static void ReportLightColorAttributes(ColorControl::ColorModeEnum colorMode)
+{
+    MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, ColorControl::Id, ColorControl::Attributes::ColorMode::Id);
+    if (colorMode == ColorControl::ColorModeEnum::kColorTemperatureMireds)
+    {
+        MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, ColorControl::Id,
+                                             ColorControl::Attributes::ColorTemperatureMireds::Id);
+    }
+    else if (colorMode == ColorControl::ColorModeEnum::kCurrentXAndCurrentY)
+    {
+        MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, ColorControl::Id, ColorControl::Attributes::CurrentX::Id);
+        MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, ColorControl::Id, ColorControl::Attributes::CurrentY::Id);
+    }
+    else
+    {
+        MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, ColorControl::Id, ColorControl::Attributes::CurrentHue::Id);
+        MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, ColorControl::Id,
+                                             ColorControl::Attributes::CurrentSaturation::Id);
+    }
+}
+
+static void ReportLightStateAttributes(ColorControl::ColorModeEnum colorMode, bool reportOnOffLevel)
+{
+    if (reportOnOffLevel)
+    {
+        MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, OnOff::Id, OnOff::Attributes::OnOff::Id);
+        MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, LevelControl::Id, LevelControl::Attributes::CurrentLevel::Id);
+    }
+    ReportLightColorAttributes(colorMode);
+}
+
+static void SyncAndReportLightStateToApp(const char * reason)
+{
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+
+    MatterSyncPowerOnAttributesFromMemory();
+
+    ColorControl::ColorModeEnum reportColorMode = ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation;
+    if (sButtonPresetLatched && sPresetIndex < kPresetCount)
+    {
+        reportColorMode = SyncMatterAttributesForPreset(sPresetIndex);
+    }
+    else if (MatterGetIsColorTempMode() != 0u)
+    {
+        reportColorMode = ColorControl::ColorModeEnum::kColorTemperatureMireds;
+        ColorControl::Attributes::ColorMode::Set(LIGHT_ENDPOINT, reportColorMode);
+        ColorControl::Attributes::ColorTemperatureMireds::Set(LIGHT_ENDPOINT, MatterGetRuntimeColorTempMireds());
+    }
+
+    ReportLightStateAttributes(reportColorMode, true);
+
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+
+    ChipLogError(Zcl,
+                 "[DIM] reported light state reason=%s preset_latched=%u preset=%u ct_mode=%u",
+                 (reason != nullptr) ? reason : "?",
+                 static_cast<unsigned>(sButtonPresetLatched ? 1u : 0u),
+                 static_cast<unsigned>(sButtonPresetLatched ? (sPresetIndex + 1u) : 0u),
+                 static_cast<unsigned>(MatterGetIsColorTempMode()));
 }
 
 static void CaptureState(PreEffectState & state)
@@ -475,20 +542,14 @@ static void RestoreButtonPresetMemoryState()
     sPresetIndex = state.presetIndex;
     MatterSetButtonPresetActive(1);
 
-    const LightPreset & p = kPresets[sPresetIndex];
-    uint8_t level254 = MatterGetMemLevel();
-    if (level254 == 0u)
-    {
-        level254 = kLevelMax;
-    }
     uint16_t wBase = 0;
     uint16_t rBase = 0;
     uint16_t gBase = 0;
     uint16_t bBase = 0;
-    ComputePresetBasePermilles(p, wBase, rBase, gBase, bBase);
+    GetPresetBasePermilles(sPresetIndex, wBase, rBase, gBase, bBase);
     MatterRestoreButtonPresetPermilles(wBase, rBase, gBase, bBase);
-    ChipLogError(Zcl, "[DIM] restored preset memory: preset=%u level=%u base_permille=%u,%u,%u,%u",
-                 static_cast<unsigned>(sPresetIndex + 1), static_cast<unsigned>(level254),
+    ChipLogError(Zcl, "[DIM] restored preset memory: preset=%u base_permille=%u,%u,%u,%u",
+                 static_cast<unsigned>(sPresetIndex + 1),
                  static_cast<unsigned>(wBase), static_cast<unsigned>(rBase),
                  static_cast<unsigned>(gBase), static_cast<unsigned>(bBase));
 }
@@ -512,32 +573,27 @@ static void ApplyButtonPresetAtIndex(size_t presetIndex, uint8_t level254)
     }
 
     sPresetIndex = presetIndex;
-    const LightPreset & p = kPresets[sPresetIndex];
+    const ButtonPresetEntry & p = kPresets[sPresetIndex];
 
     MatterSetOffTransitionActive(0);
     MatterSetButtonPresetSuppressColorCallbacks(4);
     MatterSetButtonPresetTransaction(1);
     chip::DeviceLayer::PlatformMgr().LockChipStack();
-    if (p.isCT)
-    {
-        ColorControl::Attributes::ColorTemperatureMireds::Set(LIGHT_ENDPOINT, p.param1);
-    }
-    else
-    {
-        ColorControl::Attributes::CurrentHue::Set(LIGHT_ENDPOINT, static_cast<uint8_t>(p.param1));
-        ColorControl::Attributes::CurrentSaturation::Set(LIGHT_ENDPOINT, 254);
-    }
+    const ColorControl::ColorModeEnum colorMode = SyncMatterAttributesForPreset(sPresetIndex);
     OnOff::Attributes::OnOff::Set(LIGHT_ENDPOINT, true);
+    ReportLightStateAttributes(colorMode, true);
     chip::DeviceLayer::PlatformMgr().UnlockChipStack();
     MatterSetButtonPresetTransaction(0);
 
     sButtonPresetLatched = true;
-    uint16_t wBase = 0;
-    uint16_t rBase = 0;
-    uint16_t gBase = 0;
-    uint16_t bBase = 0;
-    ComputePresetBasePermilles(p, wBase, rBase, gBase, bBase);
-    MatterSetButtonPresetPwmWithFade(wBase, rBase, gBase, bBase, level254);
+    MatterSetButtonPresetPwmWithFade(p.wPermille, p.rPermille, p.gPermille, p.bPermille, level254);
+    ChipLogError(Zcl, "[DIM] button preset=%u base_permille=%u,%u,%u,%u level254=%u matter_mode=%u hue=%u",
+                 static_cast<unsigned>(sPresetIndex + 1),
+                 static_cast<unsigned>(p.wPermille), static_cast<unsigned>(p.rPermille),
+                 static_cast<unsigned>(p.gPermille), static_cast<unsigned>(p.bPermille),
+                 static_cast<unsigned>(level254),
+                 static_cast<unsigned>(p.ctMireds != 0u ? 0u : 1u),
+                 static_cast<unsigned>(p.hue));
 
     SaveButtonPresetMemoryState();
     MatterSavePowerOnMemorySnapshot();
@@ -955,13 +1011,8 @@ static void RestoreState(const PreEffectState & state)
         sPresetIndex = state.presetIndex;
         sButtonPresetLatched = true;
         MatterSetButtonPresetActive(1);
-        const LightPreset & p = kPresets[sPresetIndex];
-        uint16_t wBase = 0;
-        uint16_t rBase = 0;
-        uint16_t gBase = 0;
-        uint16_t bBase = 0;
-        ComputePresetBasePermilles(p, wBase, rBase, gBase, bBase);
-        MatterSetButtonPresetPwmWithFade(wBase, rBase, gBase, bBase, state.level);
+        const ButtonPresetEntry & p = kPresets[sPresetIndex];
+        MatterSetButtonPresetPwmWithFade(p.wPermille, p.rPermille, p.gPermille, p.bPermille, state.level);
     }
     else
     {
@@ -1040,18 +1091,42 @@ void AppTask::FinishResetWarnEndEffect()
     ChipLogError(Zcl, "[DIM] long press interrupted between 5s and 10s");
 }
 
-void AppTask::BeginPairSuccessEffect()
+void AppTask::BeginPairSuccessEffect(const char * reason)
 {
+    if (sEffectMode == EffectMode::PairSuccess)
+    {
+        ChipLogError(Zcl, "[BLINK2] PAIR duplicate ignored reason=%s active_seq=%u",
+                     (reason != nullptr) ? reason : "?",
+                     static_cast<unsigned>(sPairSuccessSessionSeq));
+        return;
+    }
+
+    sPairSuccessSessionSeq++;
+    sPairSuccessFlashCount = 0u;
+    sPairSuccessLastOn = false;
+    const bool wasBreathing = sBootBreathingActive;
+    const bool wasPending = sPairSuccessPending;
+    const EffectMode prevEffect = sEffectMode;
     sPairSuccessPending = false;
     sBootBreathingActive = false;
     osTimerStop(sBootDefaultTimer);
     MatterApplyRgbwNow(0u, 0u, 0u, 0u);
     StartEffect(EffectMode::PairSuccess);
-    ChipLogError(Zcl, "[DIM] pairing success white blink start");
+    ChipLogError(Zcl,
+                 "[BLINK2] PAIR start seq=%u reason=%s provisioned=%u breath=%u pending=%u prev_effect=%u",
+                 static_cast<unsigned>(sPairSuccessSessionSeq),
+                 (reason != nullptr) ? reason : "?",
+                 static_cast<unsigned>(BaseApplication::sIsProvisioned ? 1u : 0u),
+                 static_cast<unsigned>(wasBreathing ? 1u : 0u),
+                 static_cast<unsigned>(wasPending ? 1u : 0u),
+                 static_cast<unsigned>(prevEffect));
 }
 
 void AppTask::FinishPairSuccessEffect()
 {
+    const uint32_t doneTick = sEffectTickMs;
+    const uint8_t flashCount = sPairSuccessFlashCount;
+    const uint32_t seq = sPairSuccessSessionSeq;
     StopEffect();
     sStartupSingleWhiteLock = false;
     MatterApplyRgbwNow(0u, 0u, 0u, 0u);
@@ -1060,6 +1135,10 @@ void AppTask::FinishPairSuccessEffect()
     OnOff::Attributes::OnOff::Set(LIGHT_ENDPOINT, false);
     chip::DeviceLayer::PlatformMgr().UnlockChipStack();
     MatterSetOffTransitionActive(0);
+    ChipLogError(Zcl, "[BLINK2] PAIR done seq=%u flashes=%u tick=%u",
+                 static_cast<unsigned>(seq),
+                 static_cast<unsigned>(flashCount),
+                 static_cast<unsigned>(doneTick));
     ChipLogError(Zcl, "[DIM] pairing success effect finished");
 }
 
@@ -1130,7 +1209,7 @@ void AppTask::RunEffectStep()
         const uint32_t offHoldStart = rampMs + holdMs + rampMs;
         if (sPairSuccessPending && t >= offHoldStart && whitePermille == 0u)
         {
-            BeginPairSuccessEffect();
+            BeginPairSuccessEffect("breath-off");
             return;
         }
 
@@ -1182,6 +1261,15 @@ void AppTask::RunEffectStep()
         {
             const uint32_t phase = sEffectTickMs % blinkUnit;
             const bool on = phase < blinkOn;
+            if (on && !sPairSuccessLastOn)
+            {
+                sPairSuccessFlashCount++;
+                ChipLogError(Zcl, "[BLINK2] PAIR flash=%u ON seq=%u tick=%u",
+                             static_cast<unsigned>(sPairSuccessFlashCount),
+                             static_cast<unsigned>(sPairSuccessSessionSeq),
+                             static_cast<unsigned>(sEffectTickMs));
+            }
+            sPairSuccessLastOn = on;
             ApplyWhiteEffectLevel(on ? 100u : 0u);
             sEffectTickMs += APP_EFFECT_TICK_MS;
             return;
@@ -1195,7 +1283,15 @@ void AppTask::RunEffectStep()
     {
         const uint32_t period = APP_IDENTIFY_BLINK_MS;
         const bool on = ((sEffectTickMs / period) % 2u) == 0u;
-        ChipLogError(AppServer, "[IDENTIFY] effect step tick=%u on=%u", static_cast<unsigned>(sEffectTickMs), on ? 1u : 0u);
+        if (on && !sIdentifyLastOn)
+        {
+            sIdentifyFlashCount++;
+            ChipLogError(AppServer, "[BLINK2] IDENTIFY flash=%u ON seq=%u tick=%u",
+                         static_cast<unsigned>(sIdentifyFlashCount),
+                         static_cast<unsigned>(sIdentifySessionSeq),
+                         static_cast<unsigned>(sEffectTickMs));
+        }
+        sIdentifyLastOn = on;
         ApplyWhiteEffectLevel(on ? 100u : 0u);
         sEffectTickMs += APP_EFFECT_TICK_MS;
         return;
@@ -1227,7 +1323,7 @@ void AppTask::OnButtonPressed()
         sStartupSingleWhiteLock = false;
         if (sPairSuccessPending)
         {
-            BeginPairSuccessEffect();
+            BeginPairSuccessEffect("btn-breath-exit");
             return;
         }
         sBootBreathExitPending = true;
@@ -1385,13 +1481,8 @@ void AppTask::HandleSingleClick()
         MatterSyncLevelBeforeOn();
         if (sButtonPresetLatched && MatterGetColorSource() == 1u)
         {
-            const LightPreset & p = kPresets[sPresetIndex];
-            uint16_t wBase = 0;
-            uint16_t rBase = 0;
-            uint16_t gBase = 0;
-            uint16_t bBase = 0;
-            ComputePresetBasePermilles(p, wBase, rBase, gBase, bBase);
-            MatterRestoreButtonPresetPermilles(wBase, rBase, gBase, bBase);
+            const ButtonPresetEntry & p = kPresets[sPresetIndex];
+            MatterRestoreButtonPresetPermilles(p.wPermille, p.rPermille, p.gPermille, p.bPermille);
             MatterSetButtonPresetActive(1);
         }
         OnOff::Attributes::OnOff::Set(LIGHT_ENDPOINT, true);
@@ -1629,19 +1720,44 @@ void AppTask::OnPlatformEvent(const chip::DeviceLayer::ChipDeviceEvent * event, 
         return;
     }
 
+    if (event->Type == chip::DeviceLayer::DeviceEventType::kServiceProvisioningChange)
+    {
+        ChipLogError(Zcl, "[BLINK2] EVENT provisioning-change provisioned=%u",
+                     static_cast<unsigned>(event->ServiceProvisioningChange.IsServiceProvisioned ? 1u : 0u));
+    }
+
     if (event->Type == chip::DeviceLayer::DeviceEventType::kCommissioningComplete)
     {
+        sCommissioningCompleteCount++;
+        ChipLogError(Zcl,
+                     "[BLINK2] EVENT commissioning-complete count=%u provisioned=%u breath=%u effect=%u pending=%u",
+                     static_cast<unsigned>(sCommissioningCompleteCount),
+                     static_cast<unsigned>(BaseApplication::sIsProvisioned ? 1u : 0u),
+                     static_cast<unsigned>(sBootBreathingActive ? 1u : 0u),
+                     static_cast<unsigned>(sEffectMode),
+                     static_cast<unsigned>(sPairSuccessPending ? 1u : 0u));
         StopCommissioningWindow();
         osTimerStop(sBootDefaultTimer);
+
+        if (sCommissioningCompleteCount < APP_PAIR_SUCCESS_COMPLETE_COUNT)
+        {
+            ChipLogError(Zcl, "[BLINK2] PAIR skipped reason=await-complete-%u count=%u",
+                         static_cast<unsigned>(APP_PAIR_SUCCESS_COMPLETE_COUNT),
+                         static_cast<unsigned>(sCommissioningCompleteCount));
+            return;
+        }
+
+        chip::DeviceLayer::PlatformMgr().ScheduleWork(
+            [](intptr_t) { SyncAndReportLightStateToApp("commissioning-complete"); }, 0);
 
         if (sBootBreathingActive && sEffectMode == EffectMode::BootBreathing)
         {
             sPairSuccessPending = true;
-            ChipLogError(Zcl, "[DIM] pairing success pending, wait for breath off");
+            ChipLogError(Zcl, "[BLINK2] PAIR deferred reason=breath-off-pending");
         }
         else
         {
-            BeginPairSuccessEffect();
+            BeginPairSuccessEffect("commissioning-complete");
         }
     }
 }
@@ -1669,6 +1785,7 @@ void AppTask::StartCommissioningWindow()
     }
 
     sCommissioningActive = true;
+    sCommissioningCompleteCount = 0u;
     osTimerStart(sPostResetWindowTimer, pdMS_TO_TICKS(APP_COMMISSIONING_WINDOW_MS));
     ChipLogError(Zcl, "[DIM] commissioning window started");
 }
@@ -1707,6 +1824,7 @@ void AppTask::RestartCommissioningTimer()
     }
 
     sCommissioningActive = true;
+    sCommissioningCompleteCount = 0u;
     osTimerStart(sPostResetWindowTimer, pdMS_TO_TICKS(APP_COMMISSIONING_WINDOW_MS));
     ChipLogError(Zcl, "[DIM] commissioning window restarted (%u min)", APP_COMMISSIONING_WINDOW_MS / 60000u);
 }
@@ -1740,12 +1858,30 @@ void AppTask::StartBootBreathing()
     ChipLogError(Zcl, "[DIM] boot breathing started");
 }
 
-void AppTask::StartIdentify(uint16_t identifyTimeSec)
+void AppTask::StartIdentify(uint16_t identifyTimeSec, const char * source)
 {
-    ChipLogError(AppServer, "[IDENTIFY] StartIdentify called (%u s)", identifyTimeSec);
+    const char * src = (source != nullptr) ? source : "unknown";
+    ChipLogError(AppServer, "[BLINK2] IDENTIFY request src=%s sec=%u provisioned=%u active=%u effect=%u",
+                 src,
+                 static_cast<unsigned>(identifyTimeSec),
+                 static_cast<unsigned>(BaseApplication::sIsProvisioned ? 1u : 0u),
+                 static_cast<unsigned>(sIdentifyActive ? 1u : 0u),
+                 static_cast<unsigned>(sEffectMode));
 
     if (ShouldSkipEffect(EffectMode::Identify))
     {
+        ChipLogError(AppServer, "[BLINK2] IDENTIFY skipped src=%s reason=ShouldSkipEffect", src);
+        return;
+    }
+
+    // Matter 配网过程中控制器会发 Identify/TriggerEffect 做发现提示。
+    // 未配网完成前不闪灯，避免与配网成功快闪重复；配网完成后仍保留 App Identify。
+    if (!BaseApplication::sIsProvisioned)
+    {
+        if (identifyTimeSec != 0u)
+        {
+            ChipLogError(AppServer, "[BLINK2] IDENTIFY suppressed src=%s reason=not-provisioned", src);
+        }
         return;
     }
 
@@ -1797,6 +1933,11 @@ void AppTask::StartIdentify(uint16_t identifyTimeSec)
     }
 
     sIdentifyActive = true;
+    sIdentifySessionSeq++;
+    sIdentifyFlashCount = 0u;
+    sIdentifyLastOn = false;
+    ChipLogError(AppServer, "[BLINK2] IDENTIFY start seq=%u src=%s sec=%u",
+                 static_cast<unsigned>(sIdentifySessionSeq), src, static_cast<unsigned>(identifyTimeSec));
     StartEffect(EffectMode::Identify);
     osTimerStart(sIdentifyTimer, pdMS_TO_TICKS(static_cast<uint32_t>(identifyTimeSec) * 1000u));
 }
@@ -1813,6 +1954,9 @@ void AppTask::StopIdentify()
     sIdentifyActive = false;
     osTimerStop(sIdentifyTimer);
     StopEffect();
+    ChipLogError(AppServer, "[BLINK2] IDENTIFY done seq=%u flashes=%u",
+                 static_cast<unsigned>(sIdentifySessionSeq),
+                 static_cast<unsigned>(sIdentifyFlashCount));
     RestoreState(sIdentifyEffectState);
 }
 

@@ -132,4 +132,6 @@
 #define APP_RESET_WARN_END_ON_MS 1200u
 #define APP_PAIR_SUCCESS_BLINK_ON_MS 200u
 #define APP_PAIR_SUCCESS_BLINK_OFF_MS 200u
+// 部分控制器会连续发两次 CommissioningComplete；只在第 N 次时闪配网成功灯
+#define APP_PAIR_SUCCESS_COMPLETE_COUNT 2u
 #define APP_IDENTIFY_BLINK_MS 400u

@@ -815,7 +815,7 @@ void BaseApplication::OnIdentifyStart(Identify * identify)
     ChipLogError(AppServer, "[IDENTIFY] OnIdentifyStart identifyTime=%u endpoint=%u",
                  static_cast<unsigned>(identify->mCluster.Cluster().GetIdentifyTime()),
                  static_cast<unsigned>(identify->mCluster.Cluster().GetPaths()[0].mEndpointId));
-    AppTask::GetAppTask().StartIdentify(identify->mCluster.Cluster().GetIdentifyTime());
+    AppTask::GetAppTask().StartIdentify(identify->mCluster.Cluster().GetIdentifyTime(), "matter-OnIdentifyStart");
 
 #if CHIP_CONFIG_ENABLE_ICD_SERVER
     StartStatusLEDTimer();
@@ -827,7 +827,7 @@ void BaseApplication::OnIdentifyStop(Identify * identify)
     ChipLogProgress(Zcl, "onIdentifyStop");
     ChipLogError(AppServer, "[IDENTIFY] OnIdentifyStop endpoint=%u",
                  static_cast<unsigned>(identify->mCluster.Cluster().GetPaths()[0].mEndpointId));
-    AppTask::GetAppTask().StartIdentify(0);
+    AppTask::GetAppTask().StartIdentify(0, "matter-OnIdentifyStop");
 
 #if CHIP_CONFIG_ENABLE_ICD_SERVER
     StopStatusLEDTimer();
@@ -865,7 +865,7 @@ void BaseApplication::OnTriggerIdentifyEffect(Identify * identify)
                                                            identify);
         ChipLogError(AppServer, "[IDENTIFY] TriggerEffect Blink/Okay received, starting short identify");
         // Trigger short identify visual via AppTask (flash white a couple of times)
-        AppTask::GetAppTask().StartIdentify(2);
+        AppTask::GetAppTask().StartIdentify(2, "matter-TriggerEffect-Blink");
         break;
     case Clusters::Identify::EffectIdentifierEnum::kBreathe:
     case Clusters::Identify::EffectIdentifierEnum::kChannelChange:
@@ -873,7 +873,7 @@ void BaseApplication::OnTriggerIdentifyEffect(Identify * identify)
                                                            identify);
         ChipLogError(AppServer, "[IDENTIFY] TriggerEffect Breathe/ChannelChange received, starting longer identify");
         // Trigger longer identify visual via AppTask
-        AppTask::GetAppTask().StartIdentify(4);
+        AppTask::GetAppTask().StartIdentify(4, "matter-TriggerEffect-Breathe");
         break;
     case Clusters::Identify::EffectIdentifierEnum::kFinishEffect:
         (void) chip::DeviceLayer::SystemLayer().CancelTimer(OnTriggerIdentifyEffectCompleted, identify);
@@ -881,12 +881,12 @@ void BaseApplication::OnTriggerIdentifyEffect(Identify * identify)
                                                            identify);
         ChipLogError(AppServer, "[IDENTIFY] TriggerEffect Finish received, stopping identify");
         // Ensure identify stops
-        AppTask::GetAppTask().StartIdentify(0);
+        AppTask::GetAppTask().StartIdentify(0, "matter-OnIdentifyStop");
         break;
     case Clusters::Identify::EffectIdentifierEnum::kStopEffect:
         (void) chip::DeviceLayer::SystemLayer().CancelTimer(OnTriggerIdentifyEffectCompleted, identify);
         ChipLogError(AppServer, "[IDENTIFY] TriggerEffect Stop received, stopping identify");
-        AppTask::GetAppTask().StartIdentify(0);
+        AppTask::GetAppTask().StartIdentify(0, "matter-OnIdentifyStop");
         break;
     default:
         sIdentifyEffect = Clusters::Identify::EffectIdentifierEnum::kStopEffect;

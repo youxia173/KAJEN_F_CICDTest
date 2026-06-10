@@ -71,7 +71,7 @@ public:
     };
 
 public:
-    static void StartIdentify(uint16_t identifyTimeSec);
+    static void StartIdentify(uint16_t identifyTimeSec, const char * source = "unknown");
 
     static AppTask & GetAppTask() { return sAppTask; }
 
@@ -130,7 +130,7 @@ private:
     static void StartResetWarnEndEffect(bool pendingFactoryReset);
     static void FinishResetWarnEndEffect();
     static void CancelResetWarningSequence();
-    static void BeginPairSuccessEffect();
+    static void BeginPairSuccessEffect(const char * reason);
     static void FinishPairSuccessEffect();
 
     /**

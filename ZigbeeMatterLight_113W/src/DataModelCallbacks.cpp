@@ -349,6 +349,8 @@ static void ApplyRgbwOutput(uint16_t r, uint16_t g, uint16_t b, uint32_t wCompar
 
 static void ApplyRgbwNowPermille(uint16_t r, uint16_t g, uint16_t b, uint16_t wPermille)
 {
+    CancelRgbwFade();
+
     if (wPermille > kWhitePermilleMax)
     {
         wPermille = kWhitePermilleMax;
@@ -505,6 +507,9 @@ static uint8_t Level254To255(uint8_t level254)
 }
 
 static void colorTempToRGB(uint16_t kelvin, uint8_t * r, uint8_t * g, uint8_t * b);
+static uint8_t CtMiredToWhiteDutyPercent(uint16_t mireds);
+static void ComputeCtRgbw(uint16_t mireds, uint8_t level254, uint8_t & rOut, uint8_t & gOut, uint8_t & bOut,
+                          uint16_t & wPermilleOut);
 
 static uint16_t Level254ToPermille(uint8_t level254)
 {
@@ -539,32 +544,6 @@ static uint8_t LevelQ16To255(int32_t levelQ16)
     return static_cast<uint8_t>(((static_cast<int64_t>(levelQ16) * 255) + (254 << 15)) / (254 << 16));
 }
 
-static void ComputeCtComp(uint16_t mireds, uint8_t & rComp, uint8_t & gComp, uint8_t & bComp)
-{
-    uint16_t targetK = 0;
-    if (mireds > 0)
-    {
-        targetK = static_cast<uint16_t>(1000000UL / mireds);
-    }
-    else
-    {
-        targetK = 2700;
-    }
-
-    uint8_t rT = 0, gT = 0, bT = 0;
-    uint8_t rW = 0, gW = 0, bW = 0;
-    colorTempToRGB(targetK, &rT, &gT, &bT);
-    colorTempToRGB(2700, &rW, &gW, &bW);
-
-    const int16_t rC = static_cast<int16_t>(rT) - static_cast<int16_t>(rW);
-    const int16_t gC = static_cast<int16_t>(gT) - static_cast<int16_t>(gW);
-    const int16_t bC = static_cast<int16_t>(bT) - static_cast<int16_t>(bW);
-
-    rComp = (rC > 0) ? static_cast<uint8_t>(rC) : 0u;
-    gComp = (gC > 0) ? static_cast<uint8_t>(gC) : 0u;
-    bComp = (bC > 0) ? static_cast<uint8_t>(bC) : 0u;
-}
-
 static void ApplyOutputFromLevelQ16(int32_t levelQ16)
 {
     CancelRgbwFade();
@@ -590,18 +569,13 @@ static void ApplyOutputFromLevelQ16(int32_t levelQ16)
     if (g_isColorTempMode)
     {
         uint16_t mireds = g_colorTempMireds;
-        uint8_t rComp = 0;
-        uint8_t gComp = 0;
-        uint8_t bComp = 0;
-        ComputeCtComp(mireds, rComp, gComp, bComp);
-
-        const uint8_t level255 = LevelQ16To255(levelQ16);
-        const uint16_t wPermille = LevelQ16ToPermille(levelQ16);
-
-        ApplyRgbwNowPermille(static_cast<uint16_t>((static_cast<uint16_t>(rComp) * level255) / 255u),
-                             static_cast<uint16_t>((static_cast<uint16_t>(gComp) * level255) / 255u),
-                             static_cast<uint16_t>((static_cast<uint16_t>(bComp) * level255) / 255u),
-                             wPermille);
+        uint8_t rOut = 0;
+        uint8_t gOut = 0;
+        uint8_t bOut = 0;
+        uint16_t wPermille = 0;
+        const uint8_t level254 = static_cast<uint8_t>(levelQ16 >> 16);
+        ComputeCtRgbw(mireds, level254, rOut, gOut, bOut, wPermille);
+        ApplyRgbwNowPermille(rOut, gOut, bOut, wPermille);
         return;
     }
 
@@ -789,6 +763,37 @@ static void colorTempToRGB(uint16_t kelvin, uint8_t *r, uint8_t *g, uint8_t *b) 
     *g = (uint8_t)gF;
     *b = (uint8_t)bF;
 }
+
+static uint8_t CtMiredToWhiteDutyPercent(uint16_t mireds)
+{
+    constexpr uint8_t kCtWarmWhitePct             = 70u;
+    constexpr uint8_t kCtExtraWarmWhitePct        = 40u;
+    constexpr uint16_t kCtWarmReferenceMired      = 370u;
+    constexpr uint16_t kCtExtraWarmReferenceMired = 455u;
+    constexpr uint16_t kCtCoolReferenceMired      = 153u;
+
+    if (mireds >= kCtExtraWarmReferenceMired)
+    {
+        return kCtExtraWarmWhitePct;
+    }
+    if (mireds >= kCtWarmReferenceMired)
+    {
+        const uint16_t span  = kCtExtraWarmReferenceMired - kCtWarmReferenceMired;
+        const uint16_t offset = mireds - kCtWarmReferenceMired;
+        const uint16_t drop  = kCtWarmWhitePct - kCtExtraWarmWhitePct;
+        return static_cast<uint8_t>(kCtWarmWhitePct -
+                                    (static_cast<uint32_t>(offset) * drop + span / 2u) / span);
+    }
+    if (mireds <= kCtCoolReferenceMired)
+    {
+        return 0u;
+    }
+
+    const uint16_t span  = kCtWarmReferenceMired - kCtCoolReferenceMired;
+    const uint16_t offset = mireds - kCtCoolReferenceMired;
+    return static_cast<uint8_t>((static_cast<uint32_t>(offset) * kCtWarmWhitePct + span / 2u) / span);
+}
+
 /*
  *
  *    Copyright (c) 2020 Project CHIP Authors
@@ -816,10 +821,12 @@ static void colorTempToRGB(uint16_t kelvin, uint8_t *r, uint8_t *g, uint8_t *b) 
 #include "RGBLEDWidget.h"
 #endif //(defined(SL_MATTER_RGB_LED_ENABLED) && SL_MATTER_RGB_LED_ENABLED == 1)
 
+#include <access/SubjectDescriptor.h>
 #include <app-common/zap-generated/attributes/Accessors.h>
 #include <app-common/zap-generated/ids/Attributes.h>
 #include <app-common/zap-generated/ids/Clusters.h>
 #include <app/ConcreteAttributePath.h>
+#include <app/util/MatterCallbacks.h>
 #include <lib/support/logging/CHIPLogging.h>
 #include <platform/KeyValueStoreManager.h>
 #include <platform/PersistedStorage.h>
@@ -890,6 +897,21 @@ static void MatterSyncPowerOnMemoryAttributes()
     ChipLogError(Zcl, "[DIM] power-on attributes synced: on=%u level=%u",
                  static_cast<unsigned>(g_restoredPowerOnState.onOff),
                  static_cast<unsigned>(g_restoredPowerOnState.level));
+}
+
+extern "C" void MatterSyncPowerOnAttributesFromMemory(void)
+{
+    MatterSyncPowerOnMemoryAttributes();
+}
+
+extern "C" uint8_t MatterGetIsColorTempMode(void)
+{
+    return g_isColorTempMode ? 1u : 0u;
+}
+
+extern "C" uint16_t MatterGetRuntimeColorTempMireds(void)
+{
+    return g_colorTempMireds;
 }
 }
 
@@ -1245,17 +1267,25 @@ static void ComputePresetRgbw(uint8_t level254, uint16_t & r, uint16_t & g, uint
 static void ComputeCtRgbw(uint16_t mireds, uint8_t level254, uint8_t & rOut, uint8_t & gOut, uint8_t & bOut,
                           uint16_t & wPermilleOut)
 {
-    uint8_t rComp = 0;
-    uint8_t gComp = 0;
-    uint8_t bComp = 0;
-    ComputeCtComp(mireds, rComp, gComp, bComp);
+    uint16_t kelvin = 2700u;
+    if (mireds > 0u)
+    {
+        kelvin = static_cast<uint16_t>(1000000UL / mireds);
+    }
 
-    const uint8_t level255 = Level254To255(level254);
+    uint8_t rFull = 0;
+    uint8_t gFull = 0;
+    uint8_t bFull = 0;
+    colorTempToRGB(kelvin, &rFull, &gFull, &bFull);
 
-    rOut = static_cast<uint8_t>((static_cast<uint16_t>(rComp) * level255) / 255u);
-    gOut = static_cast<uint8_t>((static_cast<uint16_t>(gComp) * level255) / 255u);
-    bOut = static_cast<uint8_t>((static_cast<uint16_t>(bComp) * level255) / 255u);
-    wPermilleOut = Level254ToPermille(level254);
+    const uint8_t level255        = Level254To255(level254);
+    const uint16_t levelPermille  = Level254ToPermille(level254);
+    const uint8_t whitePct        = CtMiredToWhiteDutyPercent(mireds);
+
+    rOut = static_cast<uint8_t>((static_cast<uint16_t>(rFull) * level255) / 255u);
+    gOut = static_cast<uint8_t>((static_cast<uint16_t>(gFull) * level255) / 255u);
+    bOut = static_cast<uint8_t>((static_cast<uint16_t>(bFull) * level255) / 255u);
+    wPermilleOut = static_cast<uint16_t>((static_cast<uint32_t>(whitePct) * levelPermille + 50u) / 100u);
 }
 
 extern "C" void MatterComputeCtRgbw(uint16_t mireds, uint8_t level254, uint8_t * rOut, uint8_t * gOut, uint8_t * bOut,
@@ -1426,6 +1456,9 @@ static void RestoreMatterLevel254(uint8_t level254)
 
 static void ApplyLevel254Hardware(uint8_t level254)
 {
+    // App MoveToLevel 会连续更新 CurrentLevel；取消设备侧渐变，避免与 App 渐变叠加闪烁。
+    CancelRgbwFade();
+
     if (g_buttonPresetActive)
     {
         ApplyButtonPresetByLevel(level254);
@@ -1439,7 +1472,6 @@ static void ApplyLevel254Hardware(uint8_t level254)
         uint16_t wPermille = 0;
         ColorControl::Attributes::ColorTemperatureMireds::Get(1, &mireds);
         ComputeCtRgbw(mireds, level254, rOut, gOut, bOut, wPermille);
-        CancelRgbwFade();
         ApplyRgbwNowPermille(rOut, gOut, bOut, wPermille);
     }
     else
@@ -1464,6 +1496,43 @@ static void StartTurnOnFadeForLevel254(uint8_t level254)
 }
 
 extern "C" void MatterClearButtonPresetLatch(void);
+
+namespace {
+
+class AppDataModelCallbacks : public chip::DataModelCallbacks
+{
+public:
+    CHIP_ERROR PreCommandReceived(const chip::app::ConcreteCommandPath & commandPath,
+                                  const chip::Access::SubjectDescriptor & subjectDescriptor) override
+    {
+        (void) subjectDescriptor;
+
+        if (commandPath.mEndpointId != LIGHT_ENDPOINT || commandPath.mClusterId != ColorControl::Id)
+        {
+            return CHIP_NO_ERROR;
+        }
+
+        g_buttonPresetSuppressColorCb = 0;
+        g_buttonPresetTxn               = false;
+        g_buttonPresetActive            = false;
+        g_colorSource                   = 0u;
+        MatterClearButtonPresetLatch();
+
+        ChipLogProgress(Zcl, "[DIM] app ColorControl cmd=" ChipLogFormatMEI, ChipLogValueMEI(commandPath.mCommandId));
+        return CHIP_NO_ERROR;
+    }
+};
+
+AppDataModelCallbacks sAppDataModelCallbacks;
+
+struct AppDataModelCallbacksRegistrar
+{
+    AppDataModelCallbacksRegistrar() { chip::DataModelCallbacks::SetInstance(&sAppDataModelCallbacks); }
+};
+
+AppDataModelCallbacksRegistrar sAppDataModelCallbacksRegistrar;
+
+} // namespace
 
 void MatterPostAttributeChangeCallback(const chip::app::ConcreteAttributePath & attributePath, uint8_t type, uint16_t size,
                                        uint8_t * value)
@@ -1545,6 +1614,25 @@ void MatterPostAttributeChangeCallback(const chip::app::ConcreteAttributePath & 
             return;
         }
 
+        if (attributeId == ColorControl::Attributes::ColorTemperatureMireds::Id ||
+            attributeId == ColorControl::Attributes::CurrentHue::Id ||
+            attributeId == ColorControl::Attributes::CurrentSaturation::Id ||
+            attributeId == ColorControl::Attributes::CurrentX::Id ||
+            attributeId == ColorControl::Attributes::CurrentY::Id)
+        {
+            g_buttonPresetActive = false;
+            g_colorSource        = 0u;
+            MatterClearButtonPresetLatch();
+            if (attributeId == ColorControl::Attributes::ColorTemperatureMireds::Id)
+            {
+                g_isColorTempMode = true;
+            }
+            else
+            {
+                g_isColorTempMode = false;
+            }
+        }
+
         // Ignore stale attribute replay (common on boot / OnOff toggle) before exiting
         // button preset mode, otherwise RGB presets are lost and white PWM takes over.
         if (attributeId == ColorControl::Attributes::ColorTemperatureMireds::Id)
@@ -1569,22 +1657,6 @@ void MatterPostAttributeChangeCallback(const chip::app::ConcreteAttributePath & 
                 ChipLogError(Zcl, "[DIM] ignore HSV/XY callback while ColorMode=CT");
                 return;
             }
-        }
-
-        // External app color-control writes exit button preset mode.
-        g_buttonPresetActive = false;
-        g_colorSource = 0u;
-        MatterClearButtonPresetLatch();
-        if (attributeId == ColorControl::Attributes::ColorTemperatureMireds::Id)
-        {
-            g_isColorTempMode = true;
-        }
-        else if (attributeId == ColorControl::Attributes::CurrentHue::Id ||
-                 attributeId == ColorControl::Attributes::CurrentSaturation::Id ||
-                 attributeId == ColorControl::Attributes::CurrentX::Id ||
-                 attributeId == ColorControl::Attributes::CurrentY::Id)
-        {
-            g_isColorTempMode = false;
         }
 
         if (attributeId == ColorControl::Attributes::ColorTemperatureMireds::Id) {
@@ -1859,7 +1931,7 @@ void MatterPostAttributeChangeCallback(const chip::app::ConcreteAttributePath & 
             uint16_t identifyTime = 0;
             memcpy(&identifyTime, value, sizeof(uint16_t));
             ChipLogError(Zcl, "[IDENTIFY] IdentifyTime attribute set: %u seconds", static_cast<unsigned>(identifyTime));
-            AppTask::GetAppTask().StartIdentify(identifyTime);
+            AppTask::GetAppTask().StartIdentify(identifyTime, "zigbee-identify-attr");
         }
     }
 #if defined(SL_CATALOG_ZIGBEE_ZCL_FRAMEWORK_CORE_PRESENT)
