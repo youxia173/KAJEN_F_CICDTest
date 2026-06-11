@@ -24,6 +24,7 @@ double fmod(double, double);
 double floor(double);
 float powf(float, float);
 float logf(float);
+float sinf(float);
 float floorf(float);
 }
 #endif
@@ -219,6 +220,7 @@ bool sStartupSingleWhiteLock = true;
 bool sCommissioningActive = false;
 bool sBootBreathingActive = false;
 bool sBootBreathExitPending = false;
+bool sBootBreathTimeoutPending = false;
 bool sPairSuccessPending = false;
 bool sIdentifyActive = false;
 
@@ -280,42 +282,22 @@ static void ApplyWhitePwmEffectPermille(uint16_t levelPermille)
     MatterApplyWhiteBreathPermille(levelPermille);
 }
 
-// 渐亮/渐灭正弦缓动查表：80 步 × 10ms = 800ms，值域 0~1000‰（离线预计算，运行时 O(1) 查表）。
-static constexpr uint16_t kBootBreathRampPermilleLut[] = {
-       0,    0,    1,    3,    5,    8,   12,   16,
-      20,   26,   32,   39,   46,   54,   63,   72,
-      82,   93,  104,  116,  128,  141,  155,  169,
-     184,  200,  216,  233,  251,  269,  288,  307,
-     327,  348,  370,  392,  414,  438,  462,  487,
-     513,  538,  562,  586,  608,  630,  652,  673,
-     693,  712,  731,  749,  766,  783,  799,  815,
-     830,  844,  858,  870,  882,  893,  904,  914,
-     924,  933,  941,  948,  955,  961,  967,  972,
-     977,  981,  985,  988,  991,  994,  997, 1000,
-};
-static constexpr uint32_t kBootBreathRampSteps =
-    static_cast<uint32_t>(sizeof(kBootBreathRampPermilleLut) / sizeof(kBootBreathRampPermilleLut[0]));
-
-static_assert(APP_BOOT_BREATH_RAMP_MS % APP_EFFECT_TICK_MS == 0u,
-              "APP_BOOT_BREATH_RAMP_MS must be divisible by APP_EFFECT_TICK_MS");
-static_assert((APP_BOOT_BREATH_RAMP_MS / APP_EFFECT_TICK_MS) == kBootBreathRampSteps,
-              "kBootBreathRampPermilleLut size must match ramp duration");
-
-static uint16_t BootBreathRampPermille(uint32_t elapsedMs, bool rising)
+// 半周期正弦 0→peak→0（1600ms），峰值处导数连续，避免“平台段”切换顿挫。
+static uint16_t BootBreathWhitePermille(uint32_t tInCycleMs)
 {
-    if (elapsedMs >= APP_BOOT_BREATH_RAMP_MS)
+    constexpr uint32_t kActiveMs = APP_BOOT_BREATH_RAMP_MS * 2u;
+    if (tInCycleMs >= kActiveMs)
     {
-        return rising ? 1000u : 0u;
+        return 0u;
     }
 
-    const uint32_t step = elapsedMs / APP_EFFECT_TICK_MS;
-    if (step >= kBootBreathRampSteps)
+    const float phase = (3.14159265f * static_cast<float>(tInCycleMs)) / static_cast<float>(kActiveMs);
+    const float v     = sinf(phase);
+    if (v <= 0.0f)
     {
-        return rising ? 1000u : 0u;
+        return 0u;
     }
-
-    return rising ? kBootBreathRampPermilleLut[step]
-                  : kBootBreathRampPermilleLut[(kBootBreathRampSteps - 1u) - step];
+    return static_cast<uint16_t>(v * 1000.0f + 0.5f);
 }
 
 static bool ShouldSkipEffect(AppTask::EffectMode mode)
@@ -379,6 +361,73 @@ static void PermilleRgbToXy(uint16_t rPermille, uint16_t gPermille, uint16_t bPe
     yOut = static_cast<uint16_t>(((Y / sum) * 65535.0f) + 0.5f);
 }
 
+// W 路固定 2700K；与 RGB permille 线性叠加后换算上报色温。
+static void Add2700KWhiteToXyz(uint16_t wPermille, float & xSum, float & ySum, float & zSum)
+{
+    constexpr float kWhite2700K_x = 0.4594f;
+    constexpr float kWhite2700K_y = 0.4106f;
+
+    const float yFlux = static_cast<float>(wPermille) / 1000.0f;
+    if (yFlux <= 0.0f)
+    {
+        return;
+    }
+
+    xSum += yFlux * kWhite2700K_x / kWhite2700K_y;
+    ySum += yFlux;
+    zSum += yFlux * (1.0f - kWhite2700K_x - kWhite2700K_y) / kWhite2700K_y;
+}
+
+static void AddPermilleLinearRgbToXyz(uint16_t rPermille, uint16_t gPermille, uint16_t bPermille, float & xSum,
+                                      float & ySum, float & zSum)
+{
+    const float r = static_cast<float>(rPermille) / 1000.0f;
+    const float g = static_cast<float>(gPermille) / 1000.0f;
+    const float b = static_cast<float>(bPermille) / 1000.0f;
+
+    xSum += 0.4124564f * r + 0.3575761f * g + 0.1804375f * b;
+    ySum += 0.2126729f * r + 0.7151522f * g + 0.0721750f * b;
+    zSum += 0.0193339f * r + 0.1191920f * g + 0.9503041f * b;
+}
+
+static uint16_t XyFloatToMireds(float x, float y)
+{
+    if (y <= 0.001f)
+    {
+        return 370u;
+    }
+
+    const float n     = (x - 0.3320f) / (0.1858f - y);
+    float kelvin      = 449.0f * n * n * n + 3525.0f * n * n + 6823.3f * n + 5520.08f;
+    if (kelvin < 1000.0f)
+    {
+        kelvin = 1000.0f;
+    }
+    if (kelvin > 10000.0f)
+    {
+        kelvin = 10000.0f;
+    }
+
+    return static_cast<uint16_t>((1000000.0f / kelvin) + 0.5f);
+}
+
+static uint16_t PermilleWrgbToMireds(uint16_t wPermille, uint16_t rPermille, uint16_t gPermille, uint16_t bPermille)
+{
+    float xSum = 0.0f;
+    float ySum = 0.0f;
+    float zSum = 0.0f;
+    Add2700KWhiteToXyz(wPermille, xSum, ySum, zSum);
+    AddPermilleLinearRgbToXyz(rPermille, gPermille, bPermille, xSum, ySum, zSum);
+
+    const float sum = xSum + ySum + zSum;
+    if (sum <= 0.0001f)
+    {
+        return 370u;
+    }
+
+    return XyFloatToMireds(xSum / sum, ySum / sum);
+}
+
 static ColorControl::ColorModeEnum SyncMatterAttributesForPreset(size_t presetIndex)
 {
     if (presetIndex >= kPresetCount)
@@ -389,8 +438,34 @@ static ColorControl::ColorModeEnum SyncMatterAttributesForPreset(size_t presetIn
     const ButtonPresetEntry & p = kPresets[presetIndex];
     if (p.ctMireds != 0u)
     {
+        uint16_t reportMireds = 370u;
+        if (p.wPermille > 0u)
+        {
+            if ((p.rPermille | p.gPermille | p.bPermille) != 0u)
+            {
+                reportMireds = PermilleWrgbToMireds(p.wPermille, p.rPermille, p.gPermille, p.bPermille);
+            }
+        }
+        else if ((p.rPermille | p.gPermille | p.bPermille) != 0u)
+        {
+            uint16_t colorX = 0;
+            uint16_t colorY = 0;
+            PermilleRgbToXy(p.rPermille, p.gPermille, p.bPermille, colorX, colorY);
+            reportMireds = XyFloatToMireds(static_cast<float>(colorX) / 65535.0f,
+                                           static_cast<float>(colorY) / 65535.0f);
+        }
+        else
+        {
+            reportMireds = p.ctMireds;
+        }
+
         ColorControl::Attributes::ColorMode::Set(LIGHT_ENDPOINT, ColorControl::ColorModeEnum::kColorTemperatureMireds);
-        ColorControl::Attributes::ColorTemperatureMireds::Set(LIGHT_ENDPOINT, p.ctMireds);
+        ColorControl::Attributes::ColorTemperatureMireds::Set(LIGHT_ENDPOINT, reportMireds);
+        ChipLogError(Zcl, "[DIM] preset=%u report CT mireds=%u (table=%u) wrgb=%u,%u,%u,%u",
+                     static_cast<unsigned>(presetIndex + 1u), static_cast<unsigned>(reportMireds),
+                     static_cast<unsigned>(p.ctMireds), static_cast<unsigned>(p.wPermille),
+                     static_cast<unsigned>(p.rPermille), static_cast<unsigned>(p.gPermille),
+                     static_cast<unsigned>(p.bPermille));
         return ColorControl::ColorModeEnum::kColorTemperatureMireds;
     }
 
@@ -1109,6 +1184,7 @@ void AppTask::BeginPairSuccessEffect(const char * reason)
     const EffectMode prevEffect = sEffectMode;
     sPairSuccessPending = false;
     sBootBreathingActive = false;
+    sBootBreathTimeoutPending = false;
     osTimerStop(sBootDefaultTimer);
     MatterApplyRgbwNow(0u, 0u, 0u, 0u);
     StartEffect(EffectMode::PairSuccess);
@@ -1166,6 +1242,21 @@ void AppTask::StopEffect()
     osTimerStop(sEffectTimer);
 }
 
+void AppTask::FinishBootBreathing(const char * reason)
+{
+    sBootBreathingActive = false;
+    sBootBreathTimeoutPending = false;
+    StopEffect();
+    sStartupSingleWhiteLock = false;
+    MatterApplyRgbwNow(0u, 0u, 0u, 0u);
+    MatterSetOffTransitionActive(1);
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    OnOff::Attributes::OnOff::Set(LIGHT_ENDPOINT, false);
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+    MatterSetOffTransitionActive(0);
+    ChipLogError(Zcl, "[DIM] boot breathing finished reason=%s", (reason != nullptr) ? reason : "?");
+}
+
 void AppTask::RunEffectStep()
 {
     if (sEffectMode == EffectMode::None)
@@ -1175,41 +1266,26 @@ void AppTask::RunEffectStep()
 
     // -------------------------------------------------------------------------
     // 未配网呼吸灯（EffectMode::BootBreathing）
-    // 由 sEffectTimer 每 APP_EFFECT_TICK_MS(10ms) 调用一次 RunEffectStep()。
-    // sEffectTickMs 递增，对 APP_BOOT_BREATH_CYCLE_MS 取模得到周期内位置 t。
-    // 四段波形：渐亮(0→1000‰) → 保持最亮 → 渐灭(1000‰→0) → 保持熄灭，然后循环。
-    // 每步查表得 whitePermille，再调用 MatterApplyWhiteBreathPermille() 写 timer compare。
+    // 半周期 sin：0→1000→0（1600ms），随后保持熄灭（1600ms），共 3200ms/周期。
     // -------------------------------------------------------------------------
     if (sEffectMode == EffectMode::BootBreathing)
     {
         const uint32_t cycleMs = APP_BOOT_BREATH_CYCLE_MS;
-        const uint32_t rampMs = APP_BOOT_BREATH_RAMP_MS;
-        const uint32_t holdMs = APP_BOOT_BREATH_HOLD_MS;
-        const uint32_t t = sEffectTickMs % cycleMs; // 当前周期内时间位置 [0, cycleMs)
-        uint16_t whitePermille = 0u;
-
-        if (t < rampMs) {
-            // 第 1 段：查表渐亮 0 → 1000‰
-            whitePermille = BootBreathRampPermille(t, true);
-        } else if (t < (rampMs + holdMs)) {
-            // 第 2 段：保持最亮
-            whitePermille = 1000u;
-        } else if (t < (rampMs + holdMs + rampMs)) {
-            // 第 3 段：查表渐灭 1000‰ → 0
-            const uint32_t td = t - (rampMs + holdMs);
-            whitePermille = BootBreathRampPermille(td, false);
-        } else {
-            // 第 4 段：保持熄灭
-            whitePermille = 0u;
-        }
+        const uint32_t t       = sEffectTickMs % cycleMs;
+        const uint16_t whitePermille = BootBreathWhitePermille(t);
 
         ApplyWhitePwmEffectPermille(whitePermille);
 
-        // 配网成功且处于“渐灭完成后的熄灭段”时，切到配网成功快闪（PairSuccess）
-        const uint32_t offHoldStart = rampMs + holdMs + rampMs;
-        if (sPairSuccessPending && t >= offHoldStart && whitePermille == 0u)
+        constexpr uint32_t kBreathOffStartMs = APP_BOOT_BREATH_RAMP_MS * 2u;
+        if (sPairSuccessPending && t >= kBreathOffStartMs && whitePermille == 0u)
         {
             BeginPairSuccessEffect("breath-off");
+            return;
+        }
+
+        if (sBootBreathTimeoutPending && t >= kBreathOffStartMs && whitePermille == 0u)
+        {
+            FinishBootBreathing("timeout-fade-down");
             return;
         }
 
@@ -1315,6 +1391,7 @@ void AppTask::OnButtonPressed()
     if (sBootBreathingActive)
     {
         sBootBreathingActive = false;
+        sBootBreathTimeoutPending = false;
         osTimerStop(sBootDefaultTimer);
         if (sEffectMode == EffectMode::BootBreathing)
         {
@@ -1708,18 +1785,12 @@ void AppTask::ButtonTimerEventHandler(AppEvent * aEvent)
 
     if (ctx == kTimerCtxBootBreathEnd)
     {
-        // APP_BOOT_BREATH_MS(60s) 到期且仍未配网：强制停止呼吸并灭灯
-        sBootBreathingActive = false;
-        StopEffect();
-        sStartupSingleWhiteLock = false;
-        // 呼吸期间绕过 Matter 属性直接驱动 PWM，结束前需先物理灭灯再同步 OnOff
-        MatterApplyRgbwNow(0u, 0u, 0u, 0u);
-        MatterSetOffTransitionActive(1);
-        chip::DeviceLayer::PlatformMgr().LockChipStack();
-        OnOff::Attributes::OnOff::Set(LIGHT_ENDPOINT, false);
-        chip::DeviceLayer::PlatformMgr().UnlockChipStack();
-        MatterSetOffTransitionActive(0);
-        ChipLogError(Zcl, "[DIM] boot breathing finished");
+        // APP_BOOT_BREATH_MS(60s) 到期：标记待结束，等渐灭段完成后再关灯
+        if (sBootBreathingActive && sEffectMode == EffectMode::BootBreathing)
+        {
+            sBootBreathTimeoutPending = true;
+            ChipLogError(Zcl, "[DIM] boot breathing timeout, wait fade-down to off");
+        }
         return;
     }
 
@@ -1874,6 +1945,7 @@ void AppTask::StartBootBreathing()
 
     CaptureState(sPreEffectState);
     sBootBreathingActive = true;
+    sBootBreathTimeoutPending = false;
     // 呼吸只亮白光：先清 RGB，避免掉电记忆或残留颜色干扰
     MatterApplyRgbwNow(0u, 0u, 0u, 0u);
     // 启动效果定时器（20ms 步进）并注册 60s 总超时
@@ -1936,6 +2008,7 @@ void AppTask::StartIdentify(uint16_t identifyTimeSec, const char * source)
         if (sBootBreathingActive)
         {
             sBootBreathingActive = false;
+            sBootBreathTimeoutPending = false;
             osTimerStop(sBootDefaultTimer);
             sStartupSingleWhiteLock = false;
         }

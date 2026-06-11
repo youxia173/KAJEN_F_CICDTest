@@ -132,6 +132,7 @@ private:
     static void CancelResetWarningSequence();
     static void BeginPairSuccessEffect(const char * reason);
     static void FinishPairSuccessEffect();
+    static void FinishBootBreathing(const char * reason);
 
     /**
      * @brief Override of BaseApplication::AppInit() virtual method, called by BaseApplication::Init()

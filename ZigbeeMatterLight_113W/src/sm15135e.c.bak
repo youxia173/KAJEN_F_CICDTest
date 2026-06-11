@@ -245,7 +245,7 @@ void sm15135e_fill_default(sm15135e_pixel_t *p)
   p->w = 0u;
   p->y = 0u;
 
-  sm15135e_set_all_gain(p, SM15135E_GAIN_60_7MA);
+  sm15135e_set_all_gain(p, SM15135E_GAIN_50_6MA);    //RGB输出电流设置
   p->standby = SM15135E_STANDBY_NORMAL;
   p->reserve = 0x1Fu;
 }
