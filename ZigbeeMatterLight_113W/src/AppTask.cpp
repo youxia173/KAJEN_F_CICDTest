@@ -1474,18 +1474,40 @@ void AppTask::HandleSingleClick()
         MatterSnapshotLevelForOff();
         MatterSetOffTransitionActive(1);
         OnOff::Attributes::OnOff::Set(LIGHT_ENDPOINT, false);
+        MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, OnOff::Id, OnOff::Attributes::OnOff::Id);
     }
     else
     {
         MatterSetOffTransitionActive(0);
         MatterSyncLevelBeforeOn();
+        ColorControl::ColorModeEnum reportColorMode = ColorControl::ColorModeEnum::kCurrentXAndCurrentY;
         if (sButtonPresetLatched && MatterGetColorSource() == 1u)
         {
             const ButtonPresetEntry & p = kPresets[sPresetIndex];
             MatterRestoreButtonPresetPermilles(p.wPermille, p.rPermille, p.gPermille, p.bPermille);
             MatterSetButtonPresetActive(1);
+            reportColorMode = SyncMatterAttributesForPreset(sPresetIndex);
+        }
+        else if (MatterGetIsColorTempMode() != 0u)
+        {
+            reportColorMode = ColorControl::ColorModeEnum::kColorTemperatureMireds;
+            ColorControl::Attributes::ColorMode::Set(LIGHT_ENDPOINT, reportColorMode);
+            ColorControl::Attributes::ColorTemperatureMireds::Set(LIGHT_ENDPOINT, MatterGetRuntimeColorTempMireds());
         }
         OnOff::Attributes::OnOff::Set(LIGHT_ENDPOINT, true);
+        if (sButtonPresetLatched && MatterGetColorSource() == 1u)
+        {
+            ReportLightStateAttributes(reportColorMode, true);
+        }
+        else
+        {
+            MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, OnOff::Id, OnOff::Attributes::OnOff::Id);
+            MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, LevelControl::Id, LevelControl::Attributes::CurrentLevel::Id);
+            if (MatterGetIsColorTempMode() != 0u)
+            {
+                ReportLightColorAttributes(reportColorMode);
+            }
+        }
     }
     chip::DeviceLayer::PlatformMgr().UnlockChipStack();
 }
@@ -1632,6 +1654,8 @@ void AppTask::HandleLongPressTick()
                 sDimmingLastAppliedLevel = newLevel;
                 chip::DeviceLayer::PlatformMgr().LockChipStack();
                 LevelControl::Attributes::CurrentLevel::Set(LIGHT_ENDPOINT, newLevel);
+                MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, LevelControl::Id,
+                                                       LevelControl::Attributes::CurrentLevel::Id);
                 chip::DeviceLayer::PlatformMgr().UnlockChipStack();
             }
         }

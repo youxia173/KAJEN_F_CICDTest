@@ -446,6 +446,9 @@ static uint16_t ComputeFadeSteps(uint32_t durationMs)
 
 static void InterpolateFadeRgb(uint16_t startR, uint16_t startG, uint16_t startB, uint16_t targetR, uint16_t targetG,
                                uint16_t targetB, float t, uint16_t & rOut, uint16_t & gOut, uint16_t & bOut);
+static bool ShouldUseLinearRgbFade(uint8_t sr, uint8_t sg, uint8_t sb, uint8_t tr, uint8_t tg, uint8_t tb);
+static void InterpolateFadeRgbLinear(uint8_t sr, uint8_t sg, uint8_t sb, uint8_t tr, uint8_t tg, uint8_t tb, float t,
+                                     uint16_t & rOut, uint16_t & gOut, uint16_t & bOut);
 static void GetFadePositionRgbw(uint16_t * r, uint16_t * g, uint16_t * b, uint16_t * wPermille);
 static void StartRgbwFade(uint16_t targetR, uint16_t targetG, uint16_t targetB, uint16_t targetWPermille,
                           uint32_t durationMs);
@@ -512,6 +515,19 @@ static void StartRgbwFade(uint16_t targetR, uint16_t targetG, uint16_t targetB, 
     uint16_t curB = 0;
     uint16_t curWPermille = 0;
     GetFadePositionRgbw(&curR, &curG, &curB, &curWPermille);
+
+    const bool fadeToOff =
+        (targetR == 0u && targetG == 0u && targetB == 0u && targetWPermille == 0u);
+    // RGB / preset-color off: any residual white PWM during the fade reads as a white flash.
+    // CT and W-bearing presets need W to dim out together with RGB.
+    if (fadeToOff && !g_isColorTempMode &&
+        (!g_buttonPresetActive || g_buttonPresetWPermille == 0u))
+    {
+        ApplyWhitePwmCompare(0u);
+        curWPermille             = 0u;
+        g_lastAppliedWPermille   = 0u;
+        g_lastAppliedWhiteCompare = 0u;
+    }
 
     const uint16_t dR = (curR > targetR) ? static_cast<uint16_t>(curR - targetR) : static_cast<uint16_t>(targetR - curR);
     const uint16_t dG = (curG > targetG) ? static_cast<uint16_t>(curG - targetG) : static_cast<uint16_t>(targetG - curG);
@@ -859,6 +875,46 @@ static float LerpHueShortest(float h0, float h1, float t)
     return h;
 }
 
+static bool ShouldUseLinearRgbFade(uint8_t sr, uint8_t sg, uint8_t sb, uint8_t tr, uint8_t tg, uint8_t tb)
+{
+    // Fade to off: keep hue by scaling RGB toward zero (HSV path desaturates toward white/gray).
+    if (tr == 0u && tg == 0u && tb == 0u)
+    {
+        return true;
+    }
+
+    if ((sr | sg | sb) == 0u)
+    {
+        return true;
+    }
+
+    // Level-only change: target is a scalar multiple of start (same chromaticity).
+    const uint16_t maxS = static_cast<uint16_t>(sr > sg ? (sr > sb ? sr : sb) : (sg > sb ? sg : sb));
+    const uint16_t maxT = static_cast<uint16_t>(tr > tg ? (tr > tb ? tr : tb) : (tg > tb ? tg : tb));
+    if (maxS == 0u || maxT == 0u)
+    {
+        return maxS == maxT;
+    }
+
+    const uint32_t tol = static_cast<uint32_t>(maxS) + 1u;
+    return (static_cast<uint32_t>(sr) * maxT <= static_cast<uint32_t>(tr) * maxS + tol) &&
+           (static_cast<uint32_t>(sr) * maxT + tol >= static_cast<uint32_t>(tr) * maxS) &&
+           (static_cast<uint32_t>(sg) * maxT <= static_cast<uint32_t>(tg) * maxS + tol) &&
+           (static_cast<uint32_t>(sg) * maxT + tol >= static_cast<uint32_t>(tg) * maxS) &&
+           (static_cast<uint32_t>(sb) * maxT <= static_cast<uint32_t>(tb) * maxS + tol) &&
+           (static_cast<uint32_t>(sb) * maxT + tol >= static_cast<uint32_t>(tb) * maxS);
+}
+
+static void InterpolateFadeRgbLinear(uint8_t sr, uint8_t sg, uint8_t sb, uint8_t tr, uint8_t tg, uint8_t tb, float t,
+                                     uint16_t & rOut, uint16_t & gOut, uint16_t & bOut)
+{
+    const float k0 = 1.0f - t;
+    const float k1 = t;
+    rOut           = static_cast<uint16_t>(static_cast<float>(sr) * k0 + static_cast<float>(tr) * k1 + 0.5f);
+    gOut           = static_cast<uint16_t>(static_cast<float>(sg) * k0 + static_cast<float>(tg) * k1 + 0.5f);
+    bOut           = static_cast<uint16_t>(static_cast<float>(sb) * k0 + static_cast<float>(tb) * k1 + 0.5f);
+}
+
 static void InterpolateFadeRgb(uint16_t startR, uint16_t startG, uint16_t startB, uint16_t targetR, uint16_t targetG,
                                uint16_t targetB, float t, uint16_t & rOut, uint16_t & gOut, uint16_t & bOut)
 {
@@ -868,6 +924,12 @@ static void InterpolateFadeRgb(uint16_t startR, uint16_t startG, uint16_t startB
     const uint8_t tr = ClampU8FromU16(targetR);
     const uint8_t tg = ClampU8FromU16(targetG);
     const uint8_t tb = ClampU8FromU16(targetB);
+
+    if (ShouldUseLinearRgbFade(sr, sg, sb, tr, tg, tb))
+    {
+        InterpolateFadeRgbLinear(sr, sg, sb, tr, tg, tb, t, rOut, gOut, bOut);
+        return;
+    }
 
     float h0 = 0.0f;
     float s0 = 0.0f;
@@ -1146,6 +1208,7 @@ static uint8_t CtMiredToWhiteDutyPercent(uint16_t mireds)
 #include <app-common/zap-generated/ids/Attributes.h>
 #include <app-common/zap-generated/ids/Clusters.h>
 #include <app/ConcreteAttributePath.h>
+#include <app/reporting/reporting.h>
 #include <app/util/MatterCallbacks.h>
 #include <lib/support/logging/CHIPLogging.h>
 #include <platform/KeyValueStoreManager.h>
@@ -1268,6 +1331,7 @@ extern "C" void MatterFinalizeButtonDimming(int32_t levelQ16, uint8_t levelMin, 
         (level.IsNull() || level.Value() != finalLevel))
     {
         LevelControl::Attributes::CurrentLevel::Set(1, finalLevel);
+        MatterReportingAttributeChangeCallback(1, LevelControl::Id, LevelControl::Attributes::CurrentLevel::Id);
     }
     chip::DeviceLayer::PlatformMgr().UnlockChipStack();
     g_suppressAttributeHwOutput = prevSuppress;
