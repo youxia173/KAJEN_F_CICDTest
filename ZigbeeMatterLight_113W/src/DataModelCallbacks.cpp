@@ -127,7 +127,7 @@ static uint8_t Rgb16To8(uint16_t v16)
 }
 
 // 白光 PWM：硬件 timer compare 分辨率 ≈ top+1 档（15kHz 下 top≈1333，约 1334 级）。
-// App/Matter 仍用 0~100%，内部统一 0~1000‰，在 ApplyRgbwNow 等边界转换。
+// App/Matter 仍用 0~1000‰ 逻辑亮度；输出经 SL9003 线性区映射为 33.3%~93.9% 占空比。
 static constexpr uint16_t kWhitePermilleMax = 1000u;
 
 static uint16_t WhitePercentToPermille(uint8_t pct)
@@ -164,14 +164,23 @@ static uint32_t WhitePermilleToCompare(uint16_t permille)
         permille = kWhitePermilleMax;
     }
 
-    const uint32_t top = GetWhitePwmTop();
-    return (top * static_cast<uint32_t>(permille) + kWhitePermilleMax / 2u) / kWhitePermilleMax;
+    if (permille == 0u)
+    {
+        return 0u;
+    }
+
+    const uint32_t top      = GetWhitePwmTop();
+    const uint32_t dutySpan = APP_WHITE_PWM_DUTY_MAX_PERMILLE - APP_WHITE_PWM_DUTY_MIN_PERMILLE;
+    const uint32_t dutyPermille =
+        APP_WHITE_PWM_DUTY_MIN_PERMILLE
+        + (static_cast<uint32_t>(permille) * dutySpan + kWhitePermilleMax / 2u) / kWhitePermilleMax;
+    return (top * dutyPermille + 500u) / 1000u;
 }
 
 static uint16_t WhiteCompareToPermille(uint32_t compare)
 {
     const uint32_t top = GetWhitePwmTop();
-    if (top == 0u)
+    if (top == 0u || compare == 0u)
     {
         return 0u;
     }
@@ -179,7 +188,21 @@ static uint16_t WhiteCompareToPermille(uint32_t compare)
     {
         compare = top;
     }
-    return static_cast<uint16_t>((compare * static_cast<uint32_t>(kWhitePermilleMax) + top / 2u) / top);
+
+    const uint32_t dutyPermille = (compare * 1000u + top / 2u) / top;
+    if (dutyPermille <= APP_WHITE_PWM_DUTY_MIN_PERMILLE)
+    {
+        return 0u;
+    }
+
+    const uint32_t dutySpan = APP_WHITE_PWM_DUTY_MAX_PERMILLE - APP_WHITE_PWM_DUTY_MIN_PERMILLE;
+    if (dutyPermille >= APP_WHITE_PWM_DUTY_MAX_PERMILLE)
+    {
+        return kWhitePermilleMax;
+    }
+
+    return static_cast<uint16_t>(((dutyPermille - APP_WHITE_PWM_DUTY_MIN_PERMILLE) * kWhitePermilleMax + dutySpan / 2u)
+                               / dutySpan);
 }
 
 static uint16_t Rgb8ToPermille(uint8_t channel)
@@ -704,7 +727,7 @@ static uint16_t Level254ToPermille(uint8_t level254)
 // W+RGB 混色在低亮度时 RGB 相对更显色；RGB 削减系数随亮度线性变化（越暗削减越多），W 不变。
 static uint16_t LowLevelRgbChromaScalePermille(uint8_t level254)
 {
-    constexpr uint16_t kRgbScaleAtMinLevel = 200u; // 最低亮度保留 20% RGB
+    constexpr uint16_t kRgbScaleAtMinLevel = 400u; // 最低亮度保留 100% RGB
 
     if (level254 >= APP_LEVEL_MAX)
     {
