@@ -24,7 +24,6 @@ double fmod(double, double);
 double floor(double);
 float powf(float, float);
 float logf(float);
-float sinf(float);
 float floorf(float);
 }
 #endif
@@ -282,22 +281,42 @@ static void ApplyWhitePwmEffectPermille(uint16_t levelPermille)
     MatterApplyWhiteBreathPermille(levelPermille);
 }
 
-// 半周期正弦 0→peak→0（1600ms），峰值处导数连续，避免“平台段”切换顿挫。
-static uint16_t BootBreathWhitePermille(uint32_t tInCycleMs)
+// 渐亮/渐灭正弦缓动查表：80 步 × 10ms = 800ms，值域 0~1000‰（离线预计算，运行时 O(1) 查表）。
+static constexpr uint16_t kBootBreathRampPermilleLut[] = {
+       0,    0,    1,    3,    5,    8,   12,   16,
+      20,   26,   32,   39,   46,   54,   63,   72,
+      82,   93,  104,  116,  128,  141,  155,  169,
+     184,  200,  216,  233,  251,  269,  288,  307,
+     327,  348,  370,  392,  414,  438,  462,  487,
+     513,  538,  562,  586,  608,  630,  652,  673,
+     693,  712,  731,  749,  766,  783,  799,  815,
+     830,  844,  858,  870,  882,  893,  904,  914,
+     924,  933,  941,  948,  955,  961,  967,  972,
+     977,  981,  985,  988,  991,  994,  997, 1000,
+};
+static constexpr uint32_t kBootBreathRampSteps =
+    static_cast<uint32_t>(sizeof(kBootBreathRampPermilleLut) / sizeof(kBootBreathRampPermilleLut[0]));
+
+static_assert(APP_BOOT_BREATH_RAMP_MS % APP_EFFECT_TICK_MS == 0u,
+              "APP_BOOT_BREATH_RAMP_MS must be divisible by APP_EFFECT_TICK_MS");
+static_assert((APP_BOOT_BREATH_RAMP_MS / APP_EFFECT_TICK_MS) == kBootBreathRampSteps,
+              "kBootBreathRampPermilleLut size must match ramp duration");
+
+static uint16_t BootBreathRampPermille(uint32_t elapsedMs, bool rising)
 {
-    constexpr uint32_t kActiveMs = APP_BOOT_BREATH_RAMP_MS * 2u;
-    if (tInCycleMs >= kActiveMs)
+    if (elapsedMs >= APP_BOOT_BREATH_RAMP_MS)
     {
-        return 0u;
+        return rising ? 1000u : 0u;
     }
 
-    const float phase = (3.14159265f * static_cast<float>(tInCycleMs)) / static_cast<float>(kActiveMs);
-    const float v     = sinf(phase);
-    if (v <= 0.0f)
+    const uint32_t step = elapsedMs / APP_EFFECT_TICK_MS;
+    if (step >= kBootBreathRampSteps)
     {
-        return 0u;
+        return rising ? 1000u : 0u;
     }
-    return static_cast<uint16_t>(v * 1000.0f + 0.5f);
+
+    return rising ? kBootBreathRampPermilleLut[step]
+                  : kBootBreathRampPermilleLut[(kBootBreathRampSteps - 1u) - step];
 }
 
 static bool ShouldSkipEffect(AppTask::EffectMode mode)
@@ -1266,24 +1285,44 @@ void AppTask::RunEffectStep()
 
     // -------------------------------------------------------------------------
     // 未配网呼吸灯（EffectMode::BootBreathing）
-    // 半周期 sin：0→1000→0（1600ms），随后保持熄灭（1600ms），共 3200ms/周期。
+    // 四段波形：渐亮(0→1000‰) → 保持最亮 → 渐灭(1000‰→0) → 保持熄灭，共 3200ms/周期。
     // -------------------------------------------------------------------------
     if (sEffectMode == EffectMode::BootBreathing)
     {
         const uint32_t cycleMs = APP_BOOT_BREATH_CYCLE_MS;
+        const uint32_t rampMs  = APP_BOOT_BREATH_RAMP_MS;
+        const uint32_t holdMs  = APP_BOOT_BREATH_HOLD_MS;
         const uint32_t t       = sEffectTickMs % cycleMs;
-        const uint16_t whitePermille = BootBreathWhitePermille(t);
+        uint16_t whitePermille = 0u;
+
+        if (t < rampMs)
+        {
+            whitePermille = BootBreathRampPermille(t, true);
+        }
+        else if (t < (rampMs + holdMs))
+        {
+            whitePermille = 1000u;
+        }
+        else if (t < (rampMs + holdMs + rampMs))
+        {
+            const uint32_t td = t - (rampMs + holdMs);
+            whitePermille = BootBreathRampPermille(td, false);
+        }
+        else
+        {
+            whitePermille = 0u;
+        }
 
         ApplyWhitePwmEffectPermille(whitePermille);
 
-        constexpr uint32_t kBreathOffStartMs = APP_BOOT_BREATH_RAMP_MS * 2u;
-        if (sPairSuccessPending && t >= kBreathOffStartMs && whitePermille == 0u)
+        const uint32_t offHoldStart = rampMs + holdMs + rampMs;
+        if (sPairSuccessPending && t >= offHoldStart && whitePermille == 0u)
         {
             BeginPairSuccessEffect("breath-off");
             return;
         }
 
-        if (sBootBreathTimeoutPending && t >= kBreathOffStartMs && whitePermille == 0u)
+        if (sBootBreathTimeoutPending && t >= offHoldStart && whitePermille == 0u)
         {
             FinishBootBreathing("timeout-fade-down");
             return;
