@@ -278,6 +278,15 @@ static inline void MapLogicalToSm15135eRgb16(uint16_t r, uint16_t g, uint16_t b,
     }
 }
 
+static void CancelAttrFadeCoalesce()
+{
+    g_attrFadePending = false;
+    if (g_attrFadeCoalesceTimer != nullptr)
+    {
+        (void) osTimerStop(g_attrFadeCoalesceTimer);
+    }
+}
+
 static void CancelRgbwFade()
 {
     if (!g_rgbwFade.active)
@@ -415,6 +424,7 @@ static void ApplyRgbwOutput(uint16_t r, uint16_t g, uint16_t b, uint32_t wCompar
 static void ApplyRgbwNowPermille(uint16_t r, uint16_t g, uint16_t b, uint16_t wPermille)
 {
     CancelRgbwFade();
+    CancelAttrFadeCoalesce();
 
     if (wPermille > kWhitePermilleMax)
     {
@@ -536,6 +546,8 @@ static void StartRgbwFade(uint16_t targetR, uint16_t targetG, uint16_t targetB, 
     {
         targetWPermille = kWhitePermilleMax;
     }
+
+    CancelAttrFadeCoalesce();
 
     if (g_rgbwFadeTimer == nullptr)
     {
@@ -1299,6 +1311,7 @@ static void XYToRgb(uint16_t currentX, uint16_t currentY, uint8_t level255, uint
 #include <app-common/zap-generated/attributes/Accessors.h>
 #include <app-common/zap-generated/ids/Attributes.h>
 #include <app-common/zap-generated/ids/Clusters.h>
+#include <clusters/OnOff/Commands.h>
 #include <app/ConcreteAttributePath.h>
 #include <app/reporting/reporting.h>
 #include <app/util/MatterCallbacks.h>
@@ -1964,11 +1977,7 @@ extern "C" void MatterSetButtonPresetPwmWithFade(uint16_t wPermille, uint16_t rP
             ? kWhitePermilleMax
             : ((static_cast<uint32_t>(wPermille) * static_cast<uint32_t>(levelPermille) + 500u) / 1000u));
 
-    g_attrFadePending = false;
-    if (g_attrFadeCoalesceTimer != nullptr)
-    {
-        (void) osTimerStop(g_attrFadeCoalesceTimer);
-    }
+    CancelAttrFadeCoalesce();
     StartRgbwFade(r, g, b, wOutPermille, APP_COLOR_FADE_MS, true);
     ChipLogError(Zcl, "[DIM] button preset pwm fade: W=%u R=%u G=%u B=%u level=%u",
                  static_cast<unsigned>(wPermille), static_cast<unsigned>(rPermille),
@@ -2205,7 +2214,29 @@ public:
     {
         (void) subjectDescriptor;
 
-        if (commandPath.mEndpointId != LIGHT_ENDPOINT || commandPath.mClusterId != ColorControl::Id)
+        if (commandPath.mEndpointId != LIGHT_ENDPOINT)
+        {
+            return CHIP_NO_ERROR;
+        }
+
+        if (commandPath.mClusterId == OnOff::Id)
+        {
+            if (commandPath.mCommandId == OnOff::Commands::Off::Id ||
+                commandPath.mCommandId == OnOff::Commands::OffWithEffect::Id)
+            {
+                MatterSetOffTransitionActive(1);
+            }
+            else if (commandPath.mCommandId == OnOff::Commands::On::Id ||
+                     commandPath.mCommandId == OnOff::Commands::OnWithRecallGlobalScene::Id ||
+                     commandPath.mCommandId == OnOff::Commands::OnWithTimedOff::Id)
+            {
+                MatterSetOffTransitionActive(0);
+                MatterSyncLevelBeforeOn();
+            }
+            return CHIP_NO_ERROR;
+        }
+
+        if (commandPath.mClusterId != ColorControl::Id)
         {
             return CHIP_NO_ERROR;
         }
@@ -2490,14 +2521,15 @@ void MatterPostAttributeChangeCallback(const chip::app::ConcreteAttributePath & 
 
         if (*value < APP_BUTTON_LEVEL_MIN && g_levelAtLastOn >= APP_BUTTON_LEVEL_MIN && !g_buttonDimmingHwActive)
         {
-            // Zigbee/Matter OnOff 联动效应会把 CurrentLevel 压到 MinLevel(1)，在此恢复。
+            // OnOff 联动会把 CurrentLevel 压到 MinLevel(1)。只恢复 Matter 属性，不写硬件：
+            // 关灯时 isOn 仍为 true 的窗口内写硬件会把灯重新点亮；ScheduleAttrRgbwFade 还会在
+            // 40ms 后延迟触发，覆盖随后的关灯 fade。
             if (*value != g_levelAtLastOn)
             {
                 RestoreMatterLevel254(g_levelAtLastOn);
-                ChipLogError(Zcl, "[DIM] reject stack level254=%u, restore=%u",
+                ChipLogError(Zcl, "[DIM] reject stack level254=%u, restore=%u (attr only)",
                              static_cast<unsigned>(*value), static_cast<unsigned>(g_levelAtLastOn));
             }
-            ApplyLevel254Hardware(g_levelAtLastOn);
             return;
         }
 
@@ -2523,6 +2555,7 @@ void MatterPostAttributeChangeCallback(const chip::app::ConcreteAttributePath & 
 
         if (!isOn)
         {
+            CancelAttrFadeCoalesce();
             if (level254 >= APP_BUTTON_LEVEL_MIN)
             {
                 g_levelAtLastOn = level254;
