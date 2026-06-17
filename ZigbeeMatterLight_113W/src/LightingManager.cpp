@@ -54,7 +54,7 @@ CHIP_ERROR LightingManager::Init()
     // Create cmsis os sw timer for light timer.
     mLightTimer = osTimerNew(TimerEventHandler, // timer callback handler
                              osTimerOnce,       // no timer reload (one-shot timer)
-                             (void *) this,     // pass the app task obj context
+                             static_cast<void *>(this), // pass the app task obj context
                              NULL               // No osTimerAttr_t to provide.
     );
 

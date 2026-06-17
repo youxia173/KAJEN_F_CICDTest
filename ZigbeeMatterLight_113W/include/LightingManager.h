@@ -68,7 +68,7 @@ public:
 
 private:
     friend LightingManager & LightMgr(void);
-    State_t mState;
+    State_t mState = kState_OffCompleted;
     uint8_t mCurrentLevel = 254; // 0xFE = default
 
 #if (defined(SL_MATTER_RGB_LED_ENABLED) && SL_MATTER_RGB_LED_ENABLED == 1)
@@ -79,14 +79,14 @@ private:
     uint16_t mCurrentCTMireds  = 250;
 #endif // (defined(SL_MATTER_RGB_LED_ENABLED) && SL_MATTER_RGB_LED_ENABLED == 1)
 
-    Callback_fn_initiated mActionInitiated_CB;
-    Callback_fn_completed mActionCompleted_CB;
+    Callback_fn_initiated mActionInitiated_CB = nullptr;
+    Callback_fn_completed mActionCompleted_CB = nullptr;
 
-    bool mAutoTurnOff;
-    uint32_t mAutoTurnOffDuration;
-    bool mAutoTurnOffTimerArmed;
-    bool mOffEffectArmed;
-    osTimerId_t mLightTimer;
+    bool mAutoTurnOff = false;
+    uint32_t mAutoTurnOffDuration = 0;
+    bool mAutoTurnOffTimerArmed = false;
+    bool mOffEffectArmed = false;
+    osTimerId_t mLightTimer = nullptr;
 
     void CancelTimer(void);
     void StartTimer(uint32_t aTimeoutMs);

@@ -2032,6 +2032,27 @@ extern "C" void MatterSetButtonPresetSuppressColorCallbacks(uint8_t count)
     g_buttonPresetSuppressColorCb = count;
 }
 
+extern "C" void MatterArmButtonPresetColorContext(uint8_t isColorTemp, uint16_t ctMireds)
+{
+    if (isColorTemp != 0u)
+    {
+        g_isColorTempMode = true;
+        g_colorTempMireds = ctMireds;
+        if (g_colorTempMireds < 154u)
+        {
+            g_colorTempMireds = 154u;
+        }
+        else if (g_colorTempMireds > 454u)
+        {
+            g_colorTempMireds = 454u;
+        }
+    }
+    else
+    {
+        g_isColorTempMode = false;
+    }
+}
+
 extern "C" uint8_t MatterGetButtonPresetActive()
 {
     return g_buttonPresetActive ? 1u : 0u;
@@ -2366,6 +2387,12 @@ void MatterPostAttributeChangeCallback(const chip::app::ConcreteAttributePath & 
             return;
         }
 
+        if (g_colorSource == 1u && g_buttonPresetActive)
+        {
+            // 按键预设本地写入 ColorControl 属性时，不要当成 App 接管而退出预设模式。
+            return;
+        }
+
         if (attributeId == ColorControl::Attributes::ColorTemperatureMireds::Id ||
             attributeId == ColorControl::Attributes::CurrentHue::Id ||
             attributeId == ColorControl::Attributes::CurrentSaturation::Id ||
@@ -2547,12 +2574,9 @@ void MatterPostAttributeChangeCallback(const chip::app::ConcreteAttributePath & 
             // OnOff 联动会把 CurrentLevel 压到 MinLevel(1)。只恢复 Matter 属性，不写硬件：
             // 关灯时 isOn 仍为 true 的窗口内写硬件会把灯重新点亮；ScheduleAttrRgbwFade 还会在
             // 40ms 后延迟触发，覆盖随后的关灯 fade。
-            if (*value != g_levelAtLastOn)
-            {
-                RestoreMatterLevel254(g_levelAtLastOn);
-                ChipLogError(Zcl, "[DIM] reject stack level254=%u, restore=%u (attr only)",
-                             static_cast<unsigned>(*value), static_cast<unsigned>(g_levelAtLastOn));
-            }
+            RestoreMatterLevel254(g_levelAtLastOn);
+            ChipLogError(Zcl, "[DIM] reject stack level254=%u, restore=%u (attr only)",
+                         static_cast<unsigned>(*value), static_cast<unsigned>(g_levelAtLastOn));
             return;
         }
 
