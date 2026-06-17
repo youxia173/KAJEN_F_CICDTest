@@ -77,6 +77,12 @@ extern "C" {
 #include "sl_simple_rgb_pwm_led.h"
 #include "sl_simple_rgb_pwm_led_instances.h"
 
+#include "sl_component_catalog.h"
+#ifdef SL_CATALOG_ZIGBEE_STACK_COMMON_PRESENT
+#include "ZigbeeCallbacks.h"
+#include "sl_cmp_config.h"
+#endif // SL_CATALOG_ZIGBEE_STACK_COMMON_PRESENT
+
 #ifdef SL_CATALOG_SIMPLE_LED_LED1_PRESENT
 #define LIGHT_LED 1
 #else
@@ -284,27 +290,9 @@ static void ApplyWhitePwmEffectPermille(uint16_t levelPermille)
     MatterApplyWhiteBreathPermille(levelPermille);
 }
 
-// 渐亮/渐灭正弦缓动查表：80 步 × 10ms = 800ms，值域 0~1000‰（离线预计算，运行时 O(1) 查表）。
-static constexpr uint16_t kBootBreathRampPermilleLut[] = {
-       0,    0,    1,    3,    5,    8,   12,   16,
-      20,   26,   32,   39,   46,   54,   63,   72,
-      82,   93,  104,  116,  128,  141,  155,  169,
-     184,  200,  216,  233,  251,  269,  288,  307,
-     327,  348,  370,  392,  414,  438,  462,  487,
-     513,  538,  562,  586,  608,  630,  652,  673,
-     693,  712,  731,  749,  766,  783,  799,  815,
-     830,  844,  858,  870,  882,  893,  904,  914,
-     924,  933,  941,  948,  955,  961,  967,  972,
-     977,  981,  985,  988,  991,  994,  997, 1000,
-};
-static constexpr uint32_t kBootBreathRampSteps =
-    static_cast<uint32_t>(sizeof(kBootBreathRampPermilleLut) / sizeof(kBootBreathRampPermilleLut[0]));
-
-static_assert(APP_BOOT_BREATH_RAMP_MS % APP_EFFECT_TICK_MS == 0u,
-              "APP_BOOT_BREATH_RAMP_MS must be divisible by APP_EFFECT_TICK_MS");
-static_assert((APP_BOOT_BREATH_RAMP_MS / APP_EFFECT_TICK_MS) == kBootBreathRampSteps,
-              "kBootBreathRampPermilleLut size must match ramp duration");
-
+// 未配网白光呼吸缓动：EaseInOutQuad（等价于 cubic-bezier(0.45, 0, 0.55, 1)）。
+// 直接按实时 elapsedMs 浮点计算，不再用离散查表，渐变连续平滑（最终受硬件 PWM ~1334 级限制）。
+// 渐亮段 0→1000‰，渐灭段利用曲线对称性以反向时间得到 1000→0‰。
 static uint16_t BootBreathRampPermille(uint32_t elapsedMs, bool rising)
 {
     if (elapsedMs >= APP_BOOT_BREATH_RAMP_MS)
@@ -312,14 +300,34 @@ static uint16_t BootBreathRampPermille(uint32_t elapsedMs, bool rising)
         return rising ? 1000u : 0u;
     }
 
-    const uint32_t step = elapsedMs / APP_EFFECT_TICK_MS;
-    if (step >= kBootBreathRampSteps)
+    float t = static_cast<float>(elapsedMs) / static_cast<float>(APP_BOOT_BREATH_RAMP_MS);
+    if (!rising)
     {
-        return rising ? 1000u : 0u;
+        t = 1.0f - t;
     }
 
-    return rising ? kBootBreathRampPermilleLut[step]
-                  : kBootBreathRampPermilleLut[(kBootBreathRampSteps - 1u) - step];
+    // EaseInOutQuad: t<0.5 -> 2t² ; t>=0.5 -> 1 - 2(1-t)²
+    float eased;
+    if (t < 0.5f)
+    {
+        eased = 2.0f * t * t;
+    }
+    else
+    {
+        const float inv = 1.0f - t;
+        eased = 1.0f - 2.0f * inv * inv;
+    }
+
+    float permille = eased * 1000.0f + 0.5f;
+    if (permille < 0.0f)
+    {
+        permille = 0.0f;
+    }
+    if (permille > 1000.0f)
+    {
+        permille = 1000.0f;
+    }
+    return static_cast<uint16_t>(permille);
 }
 
 static bool ShouldSkipEffect(AppTask::EffectMode mode)
@@ -1348,23 +1356,23 @@ void AppTask::RunEffectStep()
     // -------------------------------------------------------------------------
     if (sEffectMode == EffectMode::BootBreathing)
     {
-        const uint32_t cycleMs = APP_BOOT_BREATH_CYCLE_MS;
-        const uint32_t rampMs  = APP_BOOT_BREATH_RAMP_MS;
-        const uint32_t holdMs  = APP_BOOT_BREATH_HOLD_MS;
-        const uint32_t t       = sEffectTickMs % cycleMs;
-        uint16_t whitePermille = 0u;
+        const uint32_t cycleMs  = APP_BOOT_BREATH_CYCLE_MS;
+        const uint32_t rampMs   = APP_BOOT_BREATH_RAMP_MS;
+        const uint32_t topHoldMs = APP_BOOT_BREATH_TOP_HOLD_MS;
+        const uint32_t t        = sEffectTickMs % cycleMs;
+        uint16_t whitePermille  = 0u;
 
         if (t < rampMs)
         {
             whitePermille = BootBreathRampPermille(t, true);
         }
-        else if (t < (rampMs + holdMs))
+        else if (t < (rampMs + topHoldMs))
         {
             whitePermille = 1000u;
         }
-        else if (t < (rampMs + holdMs + rampMs))
+        else if (t < (rampMs + topHoldMs + rampMs))
         {
-            const uint32_t td = t - (rampMs + holdMs);
+            const uint32_t td = t - (rampMs + topHoldMs);
             whitePermille = BootBreathRampPermille(td, false);
         }
         else
@@ -1374,7 +1382,7 @@ void AppTask::RunEffectStep()
 
         ApplyWhitePwmEffectPermille(whitePermille);
 
-        const uint32_t offHoldStart = rampMs + holdMs + rampMs;
+        const uint32_t offHoldStart = rampMs + topHoldMs + rampMs;
         if (sPairSuccessPending && t >= offHoldStart && whitePermille == 0u)
         {
             BeginPairSuccessEffect("breath-off");
@@ -1594,8 +1602,9 @@ void AppTask::OnButtonReleased()
         sLongPressMs = 0;
     }
 
-    // 未配网时任意短按：重置 15 分钟配网窗口（Matter 窗口 + 本地超时定时器）
-    if (!BaseApplication::sIsProvisioned)
+    // 未配网且配网窗口仍在 15 分钟内：短按重置窗口（Matter 窗口 + Zigbee + 本地超时定时器）。
+    // 一旦 15 分钟到点关闭(sCommissioningActive=false)，短按不再重新打开 Matter/Zigbee。
+    if (!BaseApplication::sIsProvisioned && sCommissioningActive)
     {
         RestartCommissioningTimer();
     }
@@ -1883,6 +1892,13 @@ void AppTask::ButtonTimerEventHandler(AppEvent * aEvent)
     if (ctx == kTimerCtxCommissioning)
     {
         StopCommissioningWindow();
+#if defined(SL_CATALOG_ZIGBEE_STACK_COMMON_PRESENT) && defined(SL_MATTER_ZIGBEE_SEQUENTIAL)
+        // 15 分钟到达：未配网则同时关闭 Zigbee（退网、停射频），与 Matter/BLE 一起收尾
+        if (!BaseApplication::sIsProvisioned)
+        {
+            Zigbee::RequestLeave();
+        }
+#endif
         ChipLogError(Zcl, "[DIM] commissioning window timeout, window closed");
         return;
     }
@@ -2025,6 +2041,10 @@ void AppTask::RestartCommissioningTimer()
     sCommissioningActive = true;
     sCommissioningCompleteCount = 0u;
     osTimerStart(sPostResetWindowTimer, pdMS_TO_TICKS(APP_COMMISSIONING_WINDOW_MS));
+#if defined(SL_CATALOG_ZIGBEE_STACK_COMMON_PRESENT) && defined(SL_MATTER_ZIGBEE_SEQUENTIAL)
+    // 窗口重置：若 Zigbee 入网已关闭则重新打开（已开则等效续期 permit-join）
+    Zigbee::RequestStart();
+#endif
     ChipLogError(Zcl, "[DIM] commissioning window restarted (%u min)", APP_COMMISSIONING_WINDOW_MS / 60000u);
 }
 
