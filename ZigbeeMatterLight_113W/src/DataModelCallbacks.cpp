@@ -47,6 +47,8 @@ static bool g_xyPendingXDirty = false;
 static bool g_xyPendingYDirty = false;
 static bool g_offTransitionActive = false;
 static bool g_buttonDimmingHwActive = false;
+// When false, RGB-off frames keep SM15135E in normal mode (no standby) so fast blink can continue.
+static bool g_sm15135e_standby_allowed = true;
 // Suppress attribute-driven hardware output during boot until power-on memory is re-applied.
 static bool g_suppressAttributeHwOutput = true;
 static bool g_hasRestoredPowerOnState = false;
@@ -224,6 +226,12 @@ static void ApplyWhitePwmCompare(uint32_t compare)
     }
 
     g_lastAppliedWhiteCompare = compare;
+
+    if (compare == 0u)
+    {
+        sl_pwm_stop(&sl_pwm_rgb_white);
+        return;
+    }
 
 #if defined(_SILICON_LABS_32B_SERIES_2)
     TIMER_CompareBufSet(sl_pwm_rgb_white.timer, sl_pwm_rgb_white.channel, compare);
@@ -428,12 +436,30 @@ static void ApplyRgbwOutput(uint16_t r, uint16_t g, uint16_t b, uint32_t wCompar
     {
         Sm15135eEnsureInit();
 
-        uint16_t outR = 0, outG = 0, outB = 0;
-        MapLogicalToSm15135eRgb16(r16, g16, b16, &outR, &outG, &outB);
-        sm15135e_set_rgbwy(&g_sm15135e_pixel, outR, outG, outB, 0u, 0u);
-        if (!sm15135e_transmit_pixel(&g_sm15135e_pixel))
+        if (r16 == 0u && g16 == 0u && b16 == 0u)
         {
-            return;
+            sm15135e_set_rgbwy(&g_sm15135e_pixel, 0u, 0u, 0u, 0u, 0u);
+            if (g_sm15135e_standby_allowed)
+            {
+                // Stable light-off: park SM15135E in standby to cut quiescent current.
+                sm15135e_enter_standby();
+            }
+            else
+            {
+                // Effect blink off-phase: keep chip awake so the next on-phase does not miss a flash.
+                g_sm15135e_pixel.standby = SM15135E_STANDBY_NORMAL;
+                (void) sm15135e_transmit_pixel(&g_sm15135e_pixel);
+            }
+        }
+        else
+        {
+            uint16_t outR = 0, outG = 0, outB = 0;
+            MapLogicalToSm15135eRgb16(r16, g16, b16, &outR, &outG, &outB);
+            sm15135e_set_rgbwy(&g_sm15135e_pixel, outR, outG, outB, 0u, 0u);
+            if (!sm15135e_transmit_pixel(&g_sm15135e_pixel))
+            {
+                return;
+            }
         }
     }
 
@@ -840,6 +866,11 @@ static void ApplyOutputFromLevelQ16(int32_t levelQ16)
 extern "C" void MatterSetButtonDimmingActive(uint8_t active)
 {
     g_buttonDimmingHwActive = (active != 0u);
+}
+
+extern "C" void MatterSetSm15135eStandbyAllowed(uint8_t allowed)
+{
+    g_sm15135e_standby_allowed = (allowed != 0u);
 }
 
 extern "C" void MatterApplyButtonDimmingQ16(int32_t levelQ16, uint8_t levelMin, uint8_t levelMax)

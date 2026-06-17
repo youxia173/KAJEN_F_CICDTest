@@ -26,42 +26,42 @@
 // <q SL_ZIGBEE_DEBUG_STACK_GROUP_ENABLED> Stack group enabled
 // <i> Default: 1
 // <i> If this option is enabled, prints belonging to the "stack" group shall be included in the build.
-#define SL_ZIGBEE_DEBUG_STACK_GROUP_ENABLED                                     (1)
+#define SL_ZIGBEE_DEBUG_STACK_GROUP_ENABLED                                     (0)
 
 // <q SL_ZIGBEE_DEBUG_STACK_GROUP_RUNTIME_DEFAULT> Stack group runtime default
 // <i> Default: 1
 // <i> If this option is enabled, prints belonging to the "stack" group shall be runtime enabled by default.
-#define SL_ZIGBEE_DEBUG_STACK_GROUP_RUNTIME_DEFAULT                             (1)
+#define SL_ZIGBEE_DEBUG_STACK_GROUP_RUNTIME_DEFAULT                             (0)
 
 // <q SL_ZIGBEE_DEBUG_CORE_GROUP_ENABLED> Core group enabled
 // <i> Default: 1
 // <i> If this option is enabled, prints belonging to the "core" group shall be included in the build.
-#define SL_ZIGBEE_DEBUG_CORE_GROUP_ENABLED                                      (1)
+#define SL_ZIGBEE_DEBUG_CORE_GROUP_ENABLED                                      (0)
 
 // <q SL_ZIGBEE_DEBUG_CORE_GROUP_RUNTIME_DEFAULT> Core group runtime default
 // <i> Default: 1
 // <i> If this option is enabled, prints belonging to the "core" group shall be runtime enabled by default.
-#define SL_ZIGBEE_DEBUG_CORE_GROUP_RUNTIME_DEFAULT                              (1)
+#define SL_ZIGBEE_DEBUG_CORE_GROUP_RUNTIME_DEFAULT                              (0)
 
 // <q SL_ZIGBEE_DEBUG_APP_GROUP_ENABLED> App group enabled
 // <i> Default: 1
 // <i> If this option is enabled, prints belonging to the "app" group shall be included in the build.
-#define SL_ZIGBEE_DEBUG_APP_GROUP_ENABLED                                       (1)
+#define SL_ZIGBEE_DEBUG_APP_GROUP_ENABLED                                       (0)
 
 // <q SL_ZIGBEE_DEBUG_APP_GROUP_RUNTIME_DEFAULT> App group enabled
 // <i> Default: 1
 // <i> If this option is enabled, prints belonging to the "app" group shall be runtime enabled by default.
-#define SL_ZIGBEE_DEBUG_APP_GROUP_RUNTIME_DEFAULT                               (1)
+#define SL_ZIGBEE_DEBUG_APP_GROUP_RUNTIME_DEFAULT                               (0)
 
 // <q SL_ZIGBEE_DEBUG_ZCL_GROUP_ENABLED> ZCL group enabled
 // <i> Default: 1
 // <i> If this option is enabled, prints belonging to the "zcl" group shall be included in the build.
-#define SL_ZIGBEE_DEBUG_ZCL_GROUP_ENABLED                                       (1)
+#define SL_ZIGBEE_DEBUG_ZCL_GROUP_ENABLED                                       (0)
 
 // <q SL_ZIGBEE_DEBUG_ZCL_GROUP_RUNTIME_DEFAULT> ZCL group enabled
 // <i> Default: 1
 // <i> If this option is enabled, prints belonging to the "zcl" group shall be runtime enabled by default.
-#define SL_ZIGBEE_DEBUG_ZCL_GROUP_RUNTIME_DEFAULT                               (1)
+#define SL_ZIGBEE_DEBUG_ZCL_GROUP_RUNTIME_DEFAULT                               (0)
 
 // <q SL_ZIGBEE_DEBUG_PRINTS_ZCL_LEGACY_AF_DEBUG_ENABLED> Legacy App Framework Debug group enabled
 // <i> Default: 0

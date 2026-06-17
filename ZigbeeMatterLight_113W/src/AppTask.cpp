@@ -119,6 +119,7 @@ extern "C" uint8_t MatterGetIsColorTempMode();
 extern "C" uint16_t MatterGetRuntimeColorTempMireds();
 extern "C" void MatterSetOffTransitionActive(uint8_t active);
 extern "C" void MatterSetButtonDimmingActive(uint8_t active);
+extern "C" void MatterSetSm15135eStandbyAllowed(uint8_t allowed);
 extern "C" void MatterApplyButtonDimmingQ16(int32_t levelQ16, uint8_t levelMin, uint8_t levelMax);
 extern "C" void MatterFinalizeButtonDimming(int32_t levelQ16, uint8_t levelMin, uint8_t levelMax);
 extern "C" uint8_t MatterGetLevelAtLastOn();
@@ -1019,7 +1020,8 @@ void AppTask::AppTaskMain(void * pvParameter)
         appError(err);
     }
 
-#if !(defined(CHIP_CONFIG_ENABLE_ICD_SERVER) && CHIP_CONFIG_ENABLE_ICD_SERVER)
+#if !(defined(CHIP_CONFIG_ENABLE_ICD_SERVER) && CHIP_CONFIG_ENABLE_ICD_SERVER) \
+    && defined(SL_CATALOG_SIMPLE_LED_LED1_PRESENT)
     sAppTask.StartStatusLEDTimer();
 #endif
 
@@ -1166,6 +1168,7 @@ static void RestoreState(const PreEffectState & state)
 
 void AppTask::TriggerFactoryResetAfterLongPress()
 {
+    MatterSetSm15135eStandbyAllowed(1);
     ApplyRgbwEffect(0, 0, 0, 0);
 
     gResetLastFaultSignature = kLongPressResetSignature;
@@ -1291,6 +1294,13 @@ void AppTask::StartEffect(EffectMode mode)
         sEffectTickMs = 0;
         return;
     }
+
+    if (mode == EffectMode::ResetWarn || mode == EffectMode::ResetWarnEnd)
+    {
+        // Fast/slow red blink must not park SM15135E in standby between flashes.
+        MatterSetSm15135eStandbyAllowed(0);
+    }
+
     sEffectMode = mode;
     sEffectTickMs = 0;
     ChipLogError(AppServer, "[IDENTIFY] StartEffect mode=%u", static_cast<unsigned>(mode));
@@ -1301,6 +1311,10 @@ void AppTask::StopEffect()
 {
     ChipLogError(Zcl, "[EFFECT] stop mode=%u tick=%u", static_cast<unsigned>(sEffectMode),
                  static_cast<unsigned>(sEffectTickMs));
+    if (sEffectMode == EffectMode::ResetWarn || sEffectMode == EffectMode::ResetWarnEnd)
+    {
+        MatterSetSm15135eStandbyAllowed(1);
+    }
     sEffectMode = EffectMode::None;
     sEffectTickMs = 0;
     osTimerStop(sEffectTimer);
@@ -1388,9 +1402,9 @@ void AppTask::RunEffectStep()
 
     if (sEffectMode == EffectMode::ResetWarnEnd)
     {
-        const uint32_t offMs = APP_RESET_WARN_END_OFF_MS;
-        const uint32_t onMs = APP_RESET_WARN_END_ON_MS;
-        const uint32_t endMs = offMs + onMs;
+        const uint32_t offMs  = APP_RESET_WARN_END_OFF_MS;
+        const uint32_t onMs   = APP_RESET_WARN_END_ON_MS;
+        const uint32_t endMs  = offMs + onMs;
 
         if (sEffectTickMs < offMs)
         {
@@ -1460,6 +1474,11 @@ void AppTask::RunEffectStep()
 
 void AppTask::OnButtonPressed()
 {
+    if (sButtonPressed)
+    {
+        return;
+    }
+
     if (sIdentifyActive || sEffectMode == EffectMode::Identify)
     {
         // Identify 优先级最高：按键不改变 Identify 输出

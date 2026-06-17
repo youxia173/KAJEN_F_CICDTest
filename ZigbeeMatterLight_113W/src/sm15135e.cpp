@@ -63,6 +63,7 @@ static uint8_t sm15135e_reset_buf[SM15135E_RESET_BUF_BYTES] = { 0 };
 static uint8_t sm15135e_frame_buf[SM15135E_ENCODED_BYTES];
 
 static bool sm15135e_spi_inited = false;
+static bool sm15135e_in_standby = false;
 static osMutexId_t sm15135e_bus_mutex = nullptr;
 
 static void sm15135e_bus_mutex_init(void)
@@ -184,6 +185,37 @@ void sm15135e_init(void)
     sm15135e_spi_init_once();
     osDelay(2);
     sm15135e_send_reset();
+    sm15135e_in_standby = false;
+}
+
+bool sm15135e_is_in_standby(void)
+{
+    return sm15135e_in_standby;
+}
+
+void sm15135e_enter_standby(void)
+{
+    if (sm15135e_in_standby)
+    {
+        return;
+    }
+
+    sm15135e_spi_init_once();
+
+    // Standby command: all grayscale 0 with the control field set to 2'b10.
+    sm15135e_pixel_t standby_pixel;
+    sm15135e_fill_default(&standby_pixel);
+    standby_pixel.standby = SM15135E_STANDBY_SLEEP;
+
+    sm15135e_bus_lock();
+    sm15135e_encode_frame(&standby_pixel, sm15135e_frame_buf);
+    const bool frameOk = sm15135e_spi_transmit(sm15135e_frame_buf, sizeof(sm15135e_frame_buf));
+    if (frameOk)
+    {
+        (void) sm15135e_spi_transmit(sm15135e_reset_buf, sizeof(sm15135e_reset_buf));
+        sm15135e_in_standby = true;
+    }
+    sm15135e_bus_unlock();
 }
 
 void sm15135e_send_frame(const sm15135e_pixel_t * p)
@@ -208,7 +240,21 @@ bool sm15135e_transmit_pixel(const sm15135e_pixel_t * p)
 
     sm15135e_bus_lock();
     sm15135e_encode_frame(p, sm15135e_frame_buf);
-    const bool frameOk = sm15135e_spi_transmit(sm15135e_frame_buf, sizeof(sm15135e_frame_buf));
+
+    bool wakeOk = true;
+    if (sm15135e_in_standby)
+    {
+        // Wake-up: the first frame after standby is discarded by the chip, so send
+        // the encoded frame once to wake it, then fall through to send it again as
+        // the valid frame.
+        wakeOk = sm15135e_spi_transmit(sm15135e_frame_buf, sizeof(sm15135e_frame_buf));
+        if (wakeOk)
+        {
+            sm15135e_in_standby = false;
+        }
+    }
+
+    const bool frameOk = wakeOk && sm15135e_spi_transmit(sm15135e_frame_buf, sizeof(sm15135e_frame_buf));
     bool ok            = frameOk;
     if (frameOk)
     {

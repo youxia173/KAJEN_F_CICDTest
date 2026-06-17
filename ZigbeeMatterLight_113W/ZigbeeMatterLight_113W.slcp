@@ -386,7 +386,7 @@ configuration:
 - condition:
   - iostream_usart
   name: SL_IOSTREAM_USART_VCOM_RESTRICT_ENERGY_MODE_TO_ALLOW_RECEPTION
-  value: '1'
+  value: '0'
 - condition:
   - matter_ble_side_channel
   unless:
@@ -416,7 +416,7 @@ configuration:
 - condition:
   - iostream_eusart
   name: SL_IOSTREAM_EUSART_VCOM_RESTRICT_ENERGY_MODE_TO_ALLOW_RECEPTION
-  value: '1'
+  value: '0'
 - name: SL_OPENTHREAD_RTOS_TASK_PRIORITY
   value: '49'
 - name: SL_CLI_HELP_DESCRIPTION_ENABLED

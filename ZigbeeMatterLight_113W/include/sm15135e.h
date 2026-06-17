@@ -58,3 +58,10 @@ void sm15135e_set_rgbwy(sm15135e_pixel_t *p, uint16_t r, uint16_t g, uint16_t b,
 void sm15135e_set_all_gain(sm15135e_pixel_t *p, uint8_t gain);
 void sm15135e_fill_default(sm15135e_pixel_t *p);
 
+// Put the SM15135E into standby (DIN control field = 2'b10) to cut its quiescent
+// current when all RGB channels are off. The next sm15135e_transmit_pixel() wakes
+// the chip automatically: per the datasheet the first frame after standby is
+// discarded by hardware, so the driver re-sends the valid frame.
+void sm15135e_enter_standby(void);
+bool sm15135e_is_in_standby(void);
+

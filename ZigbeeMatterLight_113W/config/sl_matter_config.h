@@ -20,16 +20,14 @@
 // <i> Default: SL_MATTER_LOG_PROGRESS
 // <i> Sets the verbosity of Matter stack logging output
 #ifndef SL_MATTER_LOG_LEVEL
-// Keep only error-level stack logs; functional dimming logs are emitted with ChipLogError.
-#define SL_MATTER_LOG_LEVEL SL_MATTER_LOG_ERROR
+#define SL_MATTER_LOG_LEVEL SL_MATTER_LOG_NONE
 #endif
 
 // <q SILABS_LOG_ENABLED> Enable Silabs specific log used in matter
 // <i> Default: 1
 // <i> Enables Silicon Labs platform-specific logging within the Matter stack
 #ifndef SILABS_LOG_ENABLED
-// Enable Silicon Labs platform logging so RTT/UART output is initialized
-#define SILABS_LOG_ENABLED 1
+#define SILABS_LOG_ENABLED 0
 #endif
 
 // <q HARD_FAULT_LOG_ENABLE> Enable hard fault logging
