@@ -1724,7 +1724,7 @@ static void WritePowerOnMemorySnapshot(void)
     }
     else
     {
-        ChipLogError(Zcl, "[DIM] power-on memory saved: on=%u level=%u W=%u R=%u G=%u B=%u preset=%u ct=%u",
+        ChipLogError(Zcl, "[DIM] power-on memory saved: on=%u level=%u W=%u R=%u G=%u B=%u preset_latched=%u ct=%u",
                      static_cast<unsigned>(state.onOff), static_cast<unsigned>(state.level),
                      static_cast<unsigned>(WhitePercentToPermille(state.wDuty)),
                      static_cast<unsigned>(Rgb8ToPermille(state.r)), static_cast<unsigned>(Rgb8ToPermille(state.g)),
@@ -1850,10 +1850,6 @@ static void ComputePresetRgbw(uint8_t level254, uint16_t & r, uint16_t & g, uint
 static void SyncColorTempModeFromMatter(void)
 {
     g_isColorTempMode = false;
-    if (g_colorSource != 0u)
-    {
-        return;
-    }
 
     ColorControl::ColorModeEnum colorMode = ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation;
     chip::DeviceLayer::PlatformMgr().LockChipStack();

@@ -424,73 +424,6 @@ static void SyncEnhancedColorMode(ColorControl::ColorModeEnum colorMode)
     ColorControl::Attributes::EnhancedColorMode::Set(LIGHT_ENDPOINT, enhanced);
 }
 
-// W 路固定 2700K；与 RGB permille 线性叠加后换算上报色温。
-static void Add2700KWhiteToXyz(uint16_t wPermille, float & xSum, float & ySum, float & zSum)
-{
-    constexpr float kWhite2700K_x = 0.4594f;
-    constexpr float kWhite2700K_y = 0.4106f;
-
-    const float yFlux = static_cast<float>(wPermille) / 1000.0f;
-    if (yFlux <= 0.0f)
-    {
-        return;
-    }
-
-    xSum += yFlux * kWhite2700K_x / kWhite2700K_y;
-    ySum += yFlux;
-    zSum += yFlux * (1.0f - kWhite2700K_x - kWhite2700K_y) / kWhite2700K_y;
-}
-
-static void AddPermilleLinearRgbToXyz(uint16_t rPermille, uint16_t gPermille, uint16_t bPermille, float & xSum,
-                                      float & ySum, float & zSum)
-{
-    const float r = static_cast<float>(rPermille) / 1000.0f;
-    const float g = static_cast<float>(gPermille) / 1000.0f;
-    const float b = static_cast<float>(bPermille) / 1000.0f;
-
-    xSum += 0.4124564f * r + 0.3575761f * g + 0.1804375f * b;
-    ySum += 0.2126729f * r + 0.7151522f * g + 0.0721750f * b;
-    zSum += 0.0193339f * r + 0.1191920f * g + 0.9503041f * b;
-}
-
-static uint16_t XyFloatToMireds(float x, float y)
-{
-    if (y <= 0.001f)
-    {
-        return 370u;
-    }
-
-    const float n     = (x - 0.3320f) / (0.1858f - y);
-    float kelvin      = 449.0f * n * n * n + 3525.0f * n * n + 6823.3f * n + 5520.08f;
-    if (kelvin < 1000.0f)
-    {
-        kelvin = 1000.0f;
-    }
-    if (kelvin > 10000.0f)
-    {
-        kelvin = 10000.0f;
-    }
-
-    return static_cast<uint16_t>((1000000.0f / kelvin) + 0.5f);
-}
-
-static uint16_t PermilleWrgbToMireds(uint16_t wPermille, uint16_t rPermille, uint16_t gPermille, uint16_t bPermille)
-{
-    float xSum = 0.0f;
-    float ySum = 0.0f;
-    float zSum = 0.0f;
-    Add2700KWhiteToXyz(wPermille, xSum, ySum, zSum);
-    AddPermilleLinearRgbToXyz(rPermille, gPermille, bPermille, xSum, ySum, zSum);
-
-    const float sum = xSum + ySum + zSum;
-    if (sum <= 0.0001f)
-    {
-        return 370u;
-    }
-
-    return XyFloatToMireds(xSum / sum, ySum / sum);
-}
-
 static uint16_t ClampCtMiredsForMatter(uint16_t mireds)
 {
     if (mireds < kColorTempMiredsPhysicalMin)
@@ -504,10 +437,152 @@ static uint16_t ClampCtMiredsForMatter(uint16_t mireds)
     return mireds;
 }
 
-// 4 个色温预设：App 上报由 2700K W + RGB permille 反算 mireds，与肉眼/宜家一致；硬件仍用表里 WRGB。
+// CIE 1931 xy from mireds（Apple Home 全彩灯常读 XY/HSV 显示，CT 预设需同步）。
+static void MiredsToCieXy(uint16_t mireds, uint16_t & xOut, uint16_t & yOut)
+{
+    if (mireds == 0u)
+    {
+        mireds = 370u;
+    }
+
+    float kelvin = 1000000.0f / static_cast<float>(mireds);
+    if (kelvin < 1000.0f)
+    {
+        kelvin = 1000.0f;
+    }
+    if (kelvin > 10000.0f)
+    {
+        kelvin = 10000.0f;
+    }
+
+    float xc = 0.0f;
+    if (kelvin <= 4000.0f)
+    {
+        xc = -0.2661239e9f / (kelvin * kelvin * kelvin) - 0.2343589e6f / (kelvin * kelvin) + 0.8776956e3f / kelvin
+             + 0.179910f;
+    }
+    else
+    {
+        xc = -3.0258469e9f / (kelvin * kelvin * kelvin) + 2.1070379e6f / (kelvin * kelvin) + 0.2226347e3f / kelvin
+             + 0.240390f;
+    }
+    const float yc = -1.1063814f * xc * xc * xc - 1.34811020f * xc * xc + 2.18555832f * xc - 0.20219683f;
+
+    xOut = static_cast<uint16_t>(xc * 65536.0f + 0.5f);
+    yOut = static_cast<uint16_t>(yc * 65536.0f + 0.5f);
+    if (xOut > 0xFEFFu)
+    {
+        xOut = 0xFEFFu;
+    }
+    if (yOut > 0xFEFFu)
+    {
+        yOut = 0xFEFFu;
+    }
+}
+
+// CIE xy -> Matter HSV（仅用于 App 显示，不驱动硬件 PWM）。
+static void CieXyToMatterHueSat(uint16_t cieX, uint16_t cieY, uint8_t & hueOut, uint8_t & satOut)
+{
+    const float x = static_cast<float>(cieX) / 65535.0f;
+    const float y = static_cast<float>(cieY) / 65535.0f;
+    const float z = 1.0f - x - y;
+    if (y <= 0.0001f)
+    {
+        hueOut = 0u;
+        satOut = 0u;
+        return;
+    }
+
+    const float Y = 1.0f;
+    const float X = (Y / y) * x;
+    const float Z = (Y / y) * z;
+
+    float rf = 3.2406f * X - 1.5372f * Y - 0.4986f * Z;
+    float gf = -0.9689f * X + 1.8758f * Y + 0.0415f * Z;
+    float bf = 0.0557f * X - 0.2040f * Y + 1.0570f * Z;
+    if (rf < 0.0f)
+    {
+        rf = 0.0f;
+    }
+    if (gf < 0.0f)
+    {
+        gf = 0.0f;
+    }
+    if (bf < 0.0f)
+    {
+        bf = 0.0f;
+    }
+
+    const float maxv = (rf > gf) ? ((rf > bf) ? rf : bf) : ((gf > bf) ? gf : bf);
+    if (maxv <= 0.0001f)
+    {
+        hueOut = 0u;
+        satOut = 0u;
+        return;
+    }
+    rf /= maxv;
+    gf /= maxv;
+    bf /= maxv;
+
+    const float minv = (rf < gf) ? ((rf < bf) ? rf : bf) : ((gf < bf) ? gf : bf);
+    const float delta = 1.0f - minv;
+    if (delta <= 0.0001f)
+    {
+        hueOut = 0u;
+        satOut = 0u;
+        return;
+    }
+
+    float hueDeg = 0.0f;
+    if (rf >= gf && rf >= bf)
+    {
+        hueDeg = static_cast<float>(fmod(static_cast<double>(((gf - bf) / delta) * 60.0f + 360.0), 360.0));
+    }
+    else if (gf >= rf && gf >= bf)
+    {
+        hueDeg = ((bf - rf) / delta) * 60.0f + 120.0f;
+    }
+    else
+    {
+        hueDeg = ((rf - gf) / delta) * 60.0f + 240.0f;
+    }
+
+    hueOut = static_cast<uint8_t>((hueDeg / 360.0f) * 254.0f + 0.5f);
+    satOut = static_cast<uint8_t>(delta * 254.0f + 0.5f);
+}
+
+// Apple Home 全彩灯：CT 预设需黑体轨迹 hue + 低 sat；sat=0 全白，WRGB 反算 sat=254 变红/蓝。
+static void CtDisplayHueSatFromMireds(uint16_t cieX, uint16_t cieY, uint8_t & hueOut, uint8_t & satOut)
+{
+    uint8_t rawHue = 0u;
+    uint8_t rawSat = 0u;
+    CieXyToMatterHueSat(cieX, cieY, rawHue, rawSat);
+
+    hueOut = rawHue;
+    constexpr uint8_t kCtDisplaySatMin = 12u;
+    constexpr uint8_t kCtDisplaySatMax = 52u;
+    if (rawSat > kCtDisplaySatMax)
+    {
+        satOut = kCtDisplaySatMax;
+    }
+    else if (rawSat < kCtDisplaySatMin)
+    {
+        satOut = kCtDisplaySatMin;
+    }
+    else
+    {
+        satOut = rawSat;
+    }
+}
+
+// 4 个色温预设：Matter/App 上报用表里 ctMireds（与 Apple Home 标称 K 一致）；硬件仍用 WRGB permille。
 static uint16_t CtPresetReportMireds(const ButtonPresetEntry & p)
 {
-    return ClampCtMiredsForMatter(PermilleWrgbToMireds(p.wPermille, p.rPermille, p.gPermille, p.bPermille));
+    if (p.ctMireds == 0u)
+    {
+        return 370u;
+    }
+    return ClampCtMiredsForMatter(p.ctMireds);
 }
 
 static ColorControl::ColorModeEnum SyncMatterAttributesForPreset(size_t presetIndex)
@@ -521,15 +596,28 @@ static ColorControl::ColorModeEnum SyncMatterAttributesForPreset(size_t presetIn
     if (p.ctMireds != 0u)
     {
         const uint16_t reportMireds = CtPresetReportMireds(p);
+        uint16_t cieX               = 0u;
+        uint16_t cieY               = 0u;
+        MiredsToCieXy(reportMireds, cieX, cieY);
+        uint8_t displayHue          = 0u;
+        uint8_t displaySat          = 0u;
+        CtDisplayHueSatFromMireds(cieX, cieY, displayHue, displaySat);
 
+        // Matter/App：ColorMode=CT + mireds；hue/sat 仅黑体轨迹显示值，勿用 WRGB 硬件混色反算。
         ColorControl::Attributes::ColorMode::Set(LIGHT_ENDPOINT, ColorControl::ColorModeEnum::kColorTemperatureMireds);
         ColorControl::Attributes::ColorTemperatureMireds::Set(LIGHT_ENDPOINT, reportMireds);
+        ColorControl::Attributes::CurrentHue::Set(LIGHT_ENDPOINT, displayHue);
+        ColorControl::Attributes::CurrentSaturation::Set(LIGHT_ENDPOINT, displaySat);
+        ColorControl::Attributes::CurrentX::Set(LIGHT_ENDPOINT, cieX);
+        ColorControl::Attributes::CurrentY::Set(LIGHT_ENDPOINT, cieY);
         SyncEnhancedColorMode(ColorControl::ColorModeEnum::kColorTemperatureMireds);
-        ChipLogError(Zcl, "[DIM] preset=%u report CT mireds=%u (nominal=%u) wrgb=%u,%u,%u,%u",
+        ChipLogError(Zcl,
+                     "[DIM] preset=%u report CT mireds=%u (nominal=%u) display_hue=%u sat=%u xy=%u,%u wrgb_hw=%u,%u,%u,%u",
                      static_cast<unsigned>(presetIndex + 1u), static_cast<unsigned>(reportMireds),
-                     static_cast<unsigned>(p.ctMireds), static_cast<unsigned>(p.wPermille),
-                     static_cast<unsigned>(p.rPermille), static_cast<unsigned>(p.gPermille),
-                     static_cast<unsigned>(p.bPermille));
+                     static_cast<unsigned>(p.ctMireds), static_cast<unsigned>(displayHue),
+                     static_cast<unsigned>(displaySat), static_cast<unsigned>(cieX), static_cast<unsigned>(cieY),
+                     static_cast<unsigned>(p.wPermille), static_cast<unsigned>(p.rPermille),
+                     static_cast<unsigned>(p.gPermille), static_cast<unsigned>(p.bPermille));
         return ColorControl::ColorModeEnum::kColorTemperatureMireds;
     }
 
@@ -546,6 +634,74 @@ static ColorControl::ColorModeEnum SyncMatterAttributesForPreset(size_t presetIn
     return ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation;
 }
 
+static void LogReportedLightState(ColorControl::ColorModeEnum colorMode, bool reportOnOffLevel)
+{
+    ColorControl::ColorModeEnum mode = colorMode;
+    ColorControl::EnhancedColorModeEnum enhanced = ColorControl::EnhancedColorModeEnum::kCurrentHueAndCurrentSaturation;
+    (void) ColorControl::Attributes::ColorMode::Get(LIGHT_ENDPOINT, &mode);
+    (void) ColorControl::Attributes::EnhancedColorMode::Get(LIGHT_ENDPOINT, &enhanced);
+
+    bool onoff = false;
+    app::DataModel::Nullable<uint8_t> level;
+    if (reportOnOffLevel)
+    {
+        (void) OnOff::Attributes::OnOff::Get(LIGHT_ENDPOINT, &onoff);
+        (void) LevelControl::Attributes::CurrentLevel::Get(LIGHT_ENDPOINT, level);
+    }
+
+    if (colorMode == ColorControl::ColorModeEnum::kColorTemperatureMireds)
+    {
+        uint16_t mireds = 0;
+        uint8_t hue     = 0;
+        uint8_t sat     = 0;
+        uint16_t cieX   = 0;
+        uint16_t cieY   = 0;
+        (void) ColorControl::Attributes::ColorTemperatureMireds::Get(LIGHT_ENDPOINT, &mireds);
+        (void) ColorControl::Attributes::CurrentHue::Get(LIGHT_ENDPOINT, &hue);
+        (void) ColorControl::Attributes::CurrentSaturation::Get(LIGHT_ENDPOINT, &sat);
+        (void) ColorControl::Attributes::CurrentX::Get(LIGHT_ENDPOINT, &cieX);
+        (void) ColorControl::Attributes::CurrentY::Get(LIGHT_ENDPOINT, &cieY);
+        ChipLogError(Zcl,
+                     "[DIM] report to app: on=%u level=%u ColorMode=CT(%u) Enhanced=%u mireds=%u (~%uK) hue=%u sat=%u xy=%u,%u",
+                     static_cast<unsigned>(onoff ? 1u : 0u),
+                     static_cast<unsigned>(level.IsNull() ? 0u : level.Value()),
+                     static_cast<unsigned>(chip::to_underlying(mode)),
+                     static_cast<unsigned>(chip::to_underlying(enhanced)),
+                     static_cast<unsigned>(mireds),
+                     static_cast<unsigned>(mireds > 0u ? (1000000u / mireds) : 0u),
+                     static_cast<unsigned>(hue), static_cast<unsigned>(sat),
+                     static_cast<unsigned>(cieX), static_cast<unsigned>(cieY));
+    }
+    else if (colorMode == ColorControl::ColorModeEnum::kCurrentXAndCurrentY)
+    {
+        uint16_t x = 0;
+        uint16_t y = 0;
+        (void) ColorControl::Attributes::CurrentX::Get(LIGHT_ENDPOINT, &x);
+        (void) ColorControl::Attributes::CurrentY::Get(LIGHT_ENDPOINT, &y);
+        ChipLogError(Zcl,
+                     "[DIM] report to app: on=%u level=%u ColorMode=XY(%u) Enhanced=%u x=%u y=%u",
+                     static_cast<unsigned>(onoff ? 1u : 0u),
+                     static_cast<unsigned>(level.IsNull() ? 0u : level.Value()),
+                     static_cast<unsigned>(chip::to_underlying(mode)),
+                     static_cast<unsigned>(chip::to_underlying(enhanced)),
+                     static_cast<unsigned>(x), static_cast<unsigned>(y));
+    }
+    else
+    {
+        uint8_t hue = 0;
+        uint8_t sat = 0;
+        (void) ColorControl::Attributes::CurrentHue::Get(LIGHT_ENDPOINT, &hue);
+        (void) ColorControl::Attributes::CurrentSaturation::Get(LIGHT_ENDPOINT, &sat);
+        ChipLogError(Zcl,
+                     "[DIM] report to app: on=%u level=%u ColorMode=HSV(%u) Enhanced=%u hue=%u sat=%u",
+                     static_cast<unsigned>(onoff ? 1u : 0u),
+                     static_cast<unsigned>(level.IsNull() ? 0u : level.Value()),
+                     static_cast<unsigned>(chip::to_underlying(mode)),
+                     static_cast<unsigned>(chip::to_underlying(enhanced)),
+                     static_cast<unsigned>(hue), static_cast<unsigned>(sat));
+    }
+}
+
 static void ReportLightColorAttributes(ColorControl::ColorModeEnum colorMode)
 {
     MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, ColorControl::Id, ColorControl::Attributes::ColorMode::Id);
@@ -554,6 +710,12 @@ static void ReportLightColorAttributes(ColorControl::ColorModeEnum colorMode)
     {
         MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, ColorControl::Id,
                                              ColorControl::Attributes::ColorTemperatureMireds::Id);
+        // hue/sat 为黑体轨迹显示值，配合 mireds 让 Apple 区分暖/冷白（非 WRGB 硬件色）。
+        MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, ColorControl::Id, ColorControl::Attributes::CurrentHue::Id);
+        MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, ColorControl::Id,
+                                             ColorControl::Attributes::CurrentSaturation::Id);
+        MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, ColorControl::Id, ColorControl::Attributes::CurrentX::Id);
+        MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, ColorControl::Id, ColorControl::Attributes::CurrentY::Id);
     }
     else if (colorMode == ColorControl::ColorModeEnum::kCurrentXAndCurrentY)
     {
@@ -576,6 +738,7 @@ static void ReportLightStateAttributes(ColorControl::ColorModeEnum colorMode, bo
         MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, LevelControl::Id, LevelControl::Attributes::CurrentLevel::Id);
     }
     ReportLightColorAttributes(colorMode);
+    LogReportedLightState(colorMode, reportOnOffLevel);
 }
 
 static void SyncAndReportLightStateToApp(const char * reason)
@@ -687,14 +850,26 @@ static void RestoreButtonPresetMemoryState()
     sPresetIndex = state.presetIndex;
     MatterSetButtonPresetActive(1);
 
+    const ButtonPresetEntry & p = kPresets[sPresetIndex];
+    MatterArmButtonPresetColorContext(p.ctMireds != 0u ? 1u : 0u,
+                                      p.ctMireds != 0u ? CtPresetReportMireds(p) : 0u);
+
     uint16_t wBase = 0;
     uint16_t rBase = 0;
     uint16_t gBase = 0;
     uint16_t bBase = 0;
     GetPresetBasePermilles(sPresetIndex, wBase, rBase, gBase, bBase);
     MatterRestoreButtonPresetPermilles(wBase, rBase, gBase, bBase);
-    ChipLogError(Zcl, "[DIM] restored preset memory: preset=%u base_permille=%u,%u,%u,%u",
+
+    // 冷启动恢复预设时同步 Matter ColorControl，避免 Apple 订阅时 ColorMode 仍为 HSV/XY（ct=0）。
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    (void) SyncMatterAttributesForPreset(sPresetIndex);
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+
+    ChipLogError(Zcl, "[DIM] restored preset memory: preset=%u ct=%u mireds=%u base_permille=%u,%u,%u,%u",
                  static_cast<unsigned>(sPresetIndex + 1),
+                 static_cast<unsigned>(p.ctMireds != 0u ? 1u : 0u),
+                 static_cast<unsigned>(p.ctMireds != 0u ? CtPresetReportMireds(p) : 0u),
                  static_cast<unsigned>(wBase), static_cast<unsigned>(rBase),
                  static_cast<unsigned>(gBase), static_cast<unsigned>(bBase));
 }
