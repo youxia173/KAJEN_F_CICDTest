@@ -12,6 +12,7 @@ source:
 - path: src/LightingManager.cpp
 - path: src/main.cpp
 - path: src/DataModelCallbacks.cpp
+- path: src/ZigbeePresetRemote.cpp
 tag:
 - hardware:device:flash:1536
 - prebuilt_demo

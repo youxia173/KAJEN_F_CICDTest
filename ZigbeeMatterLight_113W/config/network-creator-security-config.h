@@ -25,7 +25,7 @@
 // <o SL_ZIGBEE_AF_PLUGIN_NETWORK_CREATOR_SECURITY_NETWORK_OPEN_TIME_S> Network Open Time (seconds) <0-65535>
 // <i> Default: 300
 // <i> The time, in seconds, that the network will remain open.
-#define SL_ZIGBEE_AF_PLUGIN_NETWORK_CREATOR_SECURITY_NETWORK_OPEN_TIME_S   300
+#define SL_ZIGBEE_AF_PLUGIN_NETWORK_CREATOR_SECURITY_NETWORK_OPEN_TIME_S   600
 
 // <q SL_ZIGBEE_AF_PLUGIN_NETWORK_CREATOR_SECURITY_ALLOW_HA_DEVICES_TO_STAY> Allow Home Automation Devices to remain on network (non-compliant)
 // <i> Default: TRUE

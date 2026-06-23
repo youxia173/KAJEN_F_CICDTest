@@ -41,11 +41,11 @@
 // <i> Default: 1
 // <i> Must be incremented for each OTA firmware update
 // <i> Integer for OTA compare; pair with SOFTWARE_VERSION_STRING for display (e.g. 208 + "2.0.8").
-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 28
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 29
 
 // <s.128 CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING> Device software version string
 // <i> Human-readable software version string
-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "0.2.8"
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "0.2.9"
 
 // <o CHIP_DEVICE_CONFIG_DEFAULT_DEVICE_HARDWARE_VERSION> Device hardware version
 // <i> Default: 1

@@ -30,6 +30,8 @@ struct AppEvent : public BaseAppEvent
     {
         kEventType_Light = BaseAppEvent::kEventType_Max + 1,
         kEventType_Install,
+        kEventType_ZigbeeRemoteColor,
+        kEventType_ZigbeeRemotePreset,
     };
 
     union
@@ -40,6 +42,17 @@ struct AppEvent : public BaseAppEvent
             int32_t Actor;
             uint8_t Value;
         } LightEvent;
+
+        struct
+        {
+            uint16_t ColorX;
+            uint16_t ColorY;
+        } ZigbeeRemoteColorEvent;
+
+        struct
+        {
+            uint8_t PresetIndex;
+        } ZigbeeRemotePresetEvent;
 
 #if (defined(SL_MATTER_RGB_LED_ENABLED) && SL_MATTER_RGB_LED_ENABLED == 1)
         struct

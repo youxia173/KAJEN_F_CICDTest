@@ -43,6 +43,34 @@
 #include "sl_cmp_config.h"
 
 #include "ZigbeeCallbacks.h"
+#include "zap-id.h"
+
+extern "C" void MatterApplyRemoteMoveToColor(uint16_t x, uint16_t y);
+extern "C" void MatterScheduleRemoteMoveToColor(uint16_t x, uint16_t y);
+extern "C" void MatterScheduleRemoteButtonPreset(uint8_t presetIndex);
+extern "C" int MatterFindZigbeePresetIndexByXy(uint16_t x, uint16_t y);
+extern "C" void MatterApplyRemoteButtonPresetByIndex(uint8_t presetIndex);
+
+#define REMOTE_PRESET_HUE_SENTINEL 254u
+#define REMOTE_PRESET_COUNT        13u
+
+static bool ParseMoveToHueSat(const sl_zigbee_af_cluster_command_t * cmd, uint8_t * hue, uint8_t * saturation)
+{
+    if (cmd == nullptr || hue == nullptr || saturation == nullptr || cmd->buffer == nullptr)
+    {
+        return false;
+    }
+
+    if (cmd->bufLen <= cmd->payloadStartIndex || (cmd->bufLen - cmd->payloadStartIndex) < 2)
+    {
+        return false;
+    }
+
+    const uint8_t * payload = cmd->buffer + cmd->payloadStartIndex;
+    *hue                    = payload[0];
+    *saturation             = payload[1];
+    return true;
+}
 
 #if SL_MATTER_CMP_SECURE_ZIGBEE
 #include "sl_token_manager_api.h"
@@ -52,7 +80,23 @@
 
 static sl_zigbee_af_event_t start_zigbee_event;
 static sl_zigbee_af_event_t finding_and_binding_event;
+static sl_zigbee_af_event_t join_refresh_event;
 static bool pendingRestart = false;
+static uint8_t startZigbeeRetryCount = 0;
+
+#define START_ZIGBEE_RETRY_MAX 8
+#define START_ZIGBEE_RETRY_MS    500
+#define JOIN_REFRESH_INTERVAL_MIN 2
+
+#if !SL_MATTER_CMP_SECURE_ZIGBEE
+static void zigbee_open_for_join(const char * reason)
+{
+    sl_status_t openStatus = sl_zigbee_af_network_creator_security_open_network();
+    sl_status_t fbtStatus  = sl_zigbee_af_find_and_bind_target_start(SL_CMP_ENDPOINT);
+
+    SILABS_LOG(" [ZB] %s: open=0x%X find-bind-target=0x%X", reason, openStatus, fbtStatus);
+}
+#endif
 
 // Stub callbacks that are unused
 extern "C" void halPrintCrashSummary(uint8_t port)
@@ -218,17 +262,33 @@ extern "C" void start_zigbee_event_handler(sl_zigbee_af_event_t * event)
     }
     else if (sl_zigbee_af_network_state() == SL_ZIGBEE_JOINED_NETWORK)
     {
+        startZigbeeRetryCount = 0;
 #if SL_MATTER_CMP_SECURE_ZIGBEE
         open_network_with_key();
 #else
-        SILABS_LOG(" [ZB] Start_evt_handler: Permitting Join");
-        sl_zigbee_af_permit_join(254, NULL);
+        SILABS_LOG(" [ZB] Start_evt_handler: Opening network for join");
+        zigbee_open_for_join("start_evt");
 #endif
+    }
+    else if (sl_zigbee_af_network_state() == SL_ZIGBEE_NO_NETWORK)
+    {
+        startZigbeeRetryCount = 0;
+        sl_status_t status = sl_zigbee_af_network_creator_network_form(distributedNetwork, 0xABCD, 1, 11);
+        SILABS_LOG(" [ZB] Form network start: 0x%X", status);
+    }
+    else if (startZigbeeRetryCount < START_ZIGBEE_RETRY_MAX)
+    {
+        startZigbeeRetryCount++;
+        SILABS_LOG(" [ZB] Start_evt: stack not ready (state=%u), retry %u",
+                   static_cast<unsigned>(sl_zigbee_af_network_state()),
+                   static_cast<unsigned>(startZigbeeRetryCount));
+        sl_zigbee_af_event_set_delay_ms(event, START_ZIGBEE_RETRY_MS);
     }
     else
     {
+        startZigbeeRetryCount = 0;
         sl_status_t status = sl_zigbee_af_network_creator_network_form(distributedNetwork, 0xABCD, 1, 11);
-        SILABS_LOG(" [ZB] Form network start: 0x%X", status);
+        SILABS_LOG(" [ZB] Form network start (after retries): 0x%X", status);
     }
 }
 
@@ -240,6 +300,22 @@ extern "C" void finding_and_binding_event_handler(sl_zigbee_af_event_t * event)
 
         SILABS_LOG(" [ZB] Find and bind target start: 0x%X", sl_zigbee_af_find_and_bind_target_start(SL_CMP_ENDPOINT));
     }
+}
+
+extern "C" void join_refresh_event_handler(sl_zigbee_af_event_t * event)
+{
+    (void) event;
+
+    if (sl_zigbee_af_network_state() == SL_ZIGBEE_JOINED_NETWORK)
+    {
+#if SL_MATTER_CMP_SECURE_ZIGBEE
+        open_network_with_key();
+#else
+        zigbee_open_for_join("join_refresh");
+#endif
+    }
+
+    sl_zigbee_af_event_set_delay_minutes(&join_refresh_event, JOIN_REFRESH_INTERVAL_MIN);
 }
 
 //----------------------
@@ -256,7 +332,14 @@ extern "C" void sl_zigbee_af_stack_status_cb(sl_status_t status)
 {
     if (status == SL_STATUS_NETWORK_UP)
     {
+        SILABS_LOG(" [ZB] Network UP: PAN 0x%04X ch %u", sl_zigbee_get_pan_id(), sl_zigbee_af_get_radio_channel());
+#if SL_MATTER_CMP_SECURE_ZIGBEE
+        open_network_with_key();
+#else
+        zigbee_open_for_join("stack_status");
+#endif
         sl_zigbee_af_event_set_active(&finding_and_binding_event);
+        sl_zigbee_af_event_set_delay_minutes(&join_refresh_event, JOIN_REFRESH_INTERVAL_MIN);
     }
     else if (status == SL_STATUS_NETWORK_DOWN)
     {
@@ -275,6 +358,7 @@ extern "C" void sl_zigbee_af_main_init_cb(void)
 {
     sl_zigbee_af_event_init(&start_zigbee_event, start_zigbee_event_handler);
     sl_zigbee_af_event_init(&finding_and_binding_event, finding_and_binding_event_handler);
+    sl_zigbee_af_event_init(&join_refresh_event, join_refresh_event_handler);
 }
 
 /** @brief Complete the network creation process.
@@ -294,8 +378,8 @@ extern "C" void sl_zigbee_af_network_creator_complete_cb(const sl_zigbee_network
 #if SL_MATTER_CMP_SECURE_ZIGBEE
     open_network_with_key();
 #else
-    SILABS_LOG(" [ZB] af_network_creator_complete: Permitting Join");
-    sl_zigbee_af_permit_join(254, NULL);
+    SILABS_LOG(" [ZB] af_network_creator_complete: Opening network for join");
+    zigbee_open_for_join("form_complete");
 #endif // SL_MATTER_CMP_SECURE_ZIGBEE
 }
 
@@ -309,6 +393,40 @@ extern "C" void sl_zigbee_af_radio_needs_calibrating_cb(void)
 #ifndef EZSP_HOST
     sl_mac_calibrate_current_channel();
 #endif
+}
+
+extern "C" bool sl_zigbee_af_pre_command_received_cb(sl_zigbee_af_cluster_command_t * cmd)
+{
+    if (cmd == nullptr || cmd->apsFrame == nullptr)
+    {
+        return false;
+    }
+
+    if (cmd->apsFrame->clusterId != ZCL_COLOR_CONTROL_CLUSTER_ID)
+    {
+        return false;
+    }
+
+    if (cmd->commandId == ZCL_MOVE_TO_HUE_AND_SATURATION_COMMAND_ID)
+    {
+        uint8_t hue = 0;
+        uint8_t saturation = 0;
+
+        if (!ParseMoveToHueSat(cmd, &hue, &saturation))
+        {
+            return false;
+        }
+
+        if (hue == REMOTE_PRESET_HUE_SENTINEL && saturation < REMOTE_PRESET_COUNT)
+        {
+            SILABS_LOG(" [ZB] RX remote preset hue=%u sat=%u ep=%u", hue, saturation,
+                       cmd->apsFrame->destinationEndpoint);
+            MatterScheduleRemoteButtonPreset(saturation);
+            return true;
+        }
+    }
+
+    return false;
 }
 
 #endif // #if (LARGE_NETWORK_TESTING == 0)

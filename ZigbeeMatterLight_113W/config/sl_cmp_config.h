@@ -45,18 +45,15 @@
  ******************************   DEFINES   ************************************
  ******************************************************************************/
 
-// 本项目策略（顺序模式 / Sequential）：
-//  - 未配网时：Matter 与 Zigbee 同时开启，两者都可配网。
-//  - Matter 配网成功后：自动关闭 Zigbee（RequestLeave）以降低功耗。
-//  - 断电重启后：只要 Matter 仍处于已配网状态（存在 fabric），就不再开启 Zigbee。
-//  - 仅当长按 10s 恢复出厂（清除 fabric）后，下次重启才会重新开启 Zigbee。
-// 上述行为由 Matter SDK 的 Sequential 模式实现，因此这里强制选择顺序模式，
-// 并覆盖构建系统可能通过命令行传入的 SL_MATTER_ZIGBEE_CMP 默认值。
-#ifdef SL_MATTER_ZIGBEE_CMP
-#undef SL_MATTER_ZIGBEE_CMP
+// 本项目策略（并发模式 / CMP）：
+//  - Matter 与 Zigbee 同时运行，共享 RAIL 射频时分复用。
+//  - Matter 配网成功后 Zigbee 保持在线，不退网。
+//  - 断电重启后：若 Matter 已配网，Zigbee 仍保持运行。
+#ifdef SL_MATTER_ZIGBEE_SEQUENTIAL
+#undef SL_MATTER_ZIGBEE_SEQUENTIAL
 #endif
-#ifndef SL_MATTER_ZIGBEE_SEQUENTIAL
-#define SL_MATTER_ZIGBEE_SEQUENTIAL
+#ifndef SL_MATTER_ZIGBEE_CMP
+#define SL_MATTER_ZIGBEE_CMP
 #endif
 
 // <h>CMP App Configuration

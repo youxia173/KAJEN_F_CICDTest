@@ -131,6 +131,11 @@ extern "C" void MatterFinalizeButtonDimming(int32_t levelQ16, uint8_t levelMin, 
 extern "C" uint8_t MatterGetLevelAtLastOn();
 extern "C" void MatterSnapshotLevelForOff();
 extern "C" void MatterSyncLevelBeforeOn();
+extern "C" void MatterApplyRemoteMoveToColor(uint16_t x, uint16_t y);
+extern "C" void MatterScheduleRemoteMoveToColor(uint16_t x, uint16_t y);
+extern "C" void MatterScheduleRemoteButtonPreset(uint8_t presetIndex);
+extern "C" int MatterFindZigbeePresetIndexByXy(uint16_t x, uint16_t y);
+extern "C" void MatterApplyRemoteButtonPresetByIndex(uint8_t presetIndex);
 
 extern "C" {
 extern volatile uint32_t gResetDiagMagic;
@@ -922,6 +927,68 @@ static void ApplyButtonPresetAtIndex(size_t presetIndex, uint8_t level254)
     MatterSavePowerOnMemorySnapshot();
 }
 
+// XY values from Zigbee switch kMatterPresets; must stay in sync with preset order 1..13.
+static const struct
+{
+    uint16_t x;
+    uint16_t y;
+} kZigbeePresetXy[kPresetCount] = {
+    { 30087, 26869 }, // 1  2700K
+    { 33140, 27211 }, // 2  2200K
+    { 24938, 24464 }, // 3  4000K
+    { 20552, 20741 }, // 4  6500K
+    { 32537, 29097 }, // 5
+    { 35701, 26584 }, // 6
+    { 39889, 23258 }, // 7
+    { 40604, 20889 }, // 8
+    { 21164, 10177 }, // 9
+    { 10667,  6942 }, // 10
+    { 16806, 29045 }, // 11
+    { 23754, 36071 }, // 12
+    { 30895, 30401 }, // 13
+};
+
+extern "C" int MatterFindZigbeePresetIndexByXy(uint16_t x, uint16_t y)
+{
+    for (size_t i = 0; i < kPresetCount; i++)
+    {
+        if (kZigbeePresetXy[i].x == x && kZigbeePresetXy[i].y == y)
+        {
+            return static_cast<int>(i);
+        }
+    }
+
+    return -1;
+}
+
+extern "C" void MatterApplyRemoteButtonPresetByIndex(uint8_t presetIndex)
+{
+    if (presetIndex >= kPresetCount)
+    {
+        return;
+    }
+
+    uint8_t level254 = kLevelMax;
+    app::DataModel::Nullable<uint8_t> level;
+    bool onoff = true;
+
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    (void) OnOff::Attributes::OnOff::Get(LIGHT_ENDPOINT, &onoff);
+    if (LevelControl::Attributes::CurrentLevel::Get(LIGHT_ENDPOINT, level) == Protocols::InteractionModel::Status::Success &&
+        !level.IsNull())
+    {
+        level254 = level.Value();
+    }
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+
+    if (!onoff)
+    {
+        level254 = (level254 < APP_BUTTON_LEVEL_MIN) ? kLevelMax : level254;
+    }
+
+    ApplyButtonPresetAtIndex(presetIndex, level254);
+}
+
 static void PrintPairingQrUrlToRtt()
 {
     const chip::RendezvousInformationFlags rendezvousFlags(chip::RendezvousInformationFlag::kBLE,
@@ -1157,6 +1224,17 @@ CHIP_ERROR AppTask::AppInit()
         {
             ChipLogError(Zcl, "[DIM] no power-on memory snapshot, keep current restored attributes");
         }
+#if defined(SL_CATALOG_ZIGBEE_STACK_COMMON_PRESENT)
+        // Matter 已配网时 BaseApplication::RequestStart() 可能早于 Zigbee 栈就绪；
+        // 延迟再次打开 Zigbee 入网窗口，供 Z3 开关 join。
+        ChipLogError(Zcl, "[ZB] Matter provisioned: reopen Zigbee join in 3s");
+        chip::DeviceLayer::PlatformMgr().ScheduleWork(
+            [](intptr_t) {
+                osDelay(pdMS_TO_TICKS(3000));
+                Zigbee::RequestStart();
+            },
+            0);
+#endif
     }
 
     // Zigbee::RequestStart() runs after AppInit and may replay CT/OnOff attributes that
@@ -1254,6 +1332,45 @@ void AppTask::LightActionEventHandler(AppEvent * aEvent)
             SILABS_LOG("Action is already in progress or active.");
         }
     }
+}
+
+static void ZigbeeRemoteColorEventHandler(AppEvent * aEvent)
+{
+    if (aEvent->Type != AppEvent::kEventType_ZigbeeRemoteColor)
+    {
+        return;
+    }
+
+    MatterApplyRemoteMoveToColor(aEvent->ZigbeeRemoteColorEvent.ColorX, aEvent->ZigbeeRemoteColorEvent.ColorY);
+}
+
+extern "C" void MatterScheduleRemoteMoveToColor(uint16_t x, uint16_t y)
+{
+    AppEvent event                        = {};
+    event.Type                            = AppEvent::kEventType_ZigbeeRemoteColor;
+    event.Handler                         = ZigbeeRemoteColorEventHandler;
+    event.ZigbeeRemoteColorEvent.ColorX   = x;
+    event.ZigbeeRemoteColorEvent.ColorY   = y;
+    AppTask::GetAppTask().PostEvent(&event);
+}
+
+static void ZigbeeRemotePresetEventHandler(AppEvent * aEvent)
+{
+    if (aEvent->Type != AppEvent::kEventType_ZigbeeRemotePreset)
+    {
+        return;
+    }
+
+    MatterApplyRemoteButtonPresetByIndex(aEvent->ZigbeeRemotePresetEvent.PresetIndex);
+}
+
+extern "C" void MatterScheduleRemoteButtonPreset(uint8_t presetIndex)
+{
+    AppEvent event                              = {};
+    event.Type                                  = AppEvent::kEventType_ZigbeeRemotePreset;
+    event.Handler                               = ZigbeeRemotePresetEventHandler;
+    event.ZigbeeRemotePresetEvent.PresetIndex   = presetIndex;
+    AppTask::GetAppTask().PostEvent(&event);
 }
 
 #if (defined(SL_MATTER_RGB_LED_ENABLED) && SL_MATTER_RGB_LED_ENABLED == 1)
@@ -1777,8 +1894,7 @@ void AppTask::OnButtonReleased()
         sLongPressMs = 0;
     }
 
-    // 未配网且配网窗口仍在 15 分钟内：短按重置窗口（Matter 窗口 + Zigbee + 本地超时定时器）。
-    // 一旦 15 分钟到点关闭(sCommissioningActive=false)，短按不再重新打开 Matter/Zigbee。
+    // 未配网且配网窗口仍在 15 分钟内：短按重置窗口（Matter 窗口 + Zigbee permit-join + 本地超时定时器）。
     if (!BaseApplication::sIsProvisioned && sCommissioningActive)
     {
         RestartCommissioningTimer();
@@ -2067,13 +2183,6 @@ void AppTask::ButtonTimerEventHandler(AppEvent * aEvent)
     if (ctx == kTimerCtxCommissioning)
     {
         StopCommissioningWindow();
-#if defined(SL_CATALOG_ZIGBEE_STACK_COMMON_PRESENT) && defined(SL_MATTER_ZIGBEE_SEQUENTIAL)
-        // 15 分钟到达：未配网则同时关闭 Zigbee（退网、停射频），与 Matter/BLE 一起收尾
-        if (!BaseApplication::sIsProvisioned)
-        {
-            Zigbee::RequestLeave();
-        }
-#endif
         ChipLogError(Zcl, "[DIM] commissioning window timeout, window closed");
         return;
     }
@@ -2177,6 +2286,9 @@ void AppTask::StartCommissioningWindow()
     sCommissioningActive = true;
     sCommissioningCompleteCount = 0u;
     osTimerStart(sPostResetWindowTimer, pdMS_TO_TICKS(APP_COMMISSIONING_WINDOW_MS));
+#if defined(SL_CATALOG_ZIGBEE_STACK_COMMON_PRESENT)
+    Zigbee::RequestStart();
+#endif
     ChipLogError(Zcl, "[DIM] commissioning window started");
 }
 
@@ -2216,8 +2328,8 @@ void AppTask::RestartCommissioningTimer()
     sCommissioningActive = true;
     sCommissioningCompleteCount = 0u;
     osTimerStart(sPostResetWindowTimer, pdMS_TO_TICKS(APP_COMMISSIONING_WINDOW_MS));
-#if defined(SL_CATALOG_ZIGBEE_STACK_COMMON_PRESENT) && defined(SL_MATTER_ZIGBEE_SEQUENTIAL)
-    // 窗口重置：若 Zigbee 入网已关闭则重新打开（已开则等效续期 permit-join）
+#if defined(SL_CATALOG_ZIGBEE_STACK_COMMON_PRESENT)
+    // 配网窗口重置：续期 Zigbee permit-join（CMP 模式下 Zigbee 始终在线）
     Zigbee::RequestStart();
 #endif
     ChipLogError(Zcl, "[DIM] commissioning window restarted (%u min)", APP_COMMISSIONING_WINDOW_MS / 60000u);

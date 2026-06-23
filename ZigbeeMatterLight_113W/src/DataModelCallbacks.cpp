@@ -2274,6 +2274,37 @@ static void StartTurnOnFadeForLevel254(uint8_t level254)
 }
 
 extern "C" void MatterClearButtonPresetLatch(void);
+extern "C" int MatterFindZigbeePresetIndexByXy(uint16_t x, uint16_t y);
+extern "C" void MatterApplyRemoteButtonPresetByIndex(uint8_t presetIndex);
+
+extern "C" void MatterExitButtonPresetForRemoteColor(void)
+{
+    g_buttonPresetActive = false;
+    g_colorSource        = 0u;
+    g_isColorTempMode    = false;
+    MatterClearButtonPresetLatch();
+    ChipLogError(Zcl, "[ZB] exit button preset for remote color");
+}
+
+extern "C" void MatterApplyRemoteMoveToColor(uint16_t x, uint16_t y)
+{
+    if (g_offTransitionActive)
+    {
+        ChipLogError(Zcl, "[ZB] ignore MoveToColor while off-fade active");
+        return;
+    }
+
+    const int presetIndex = MatterFindZigbeePresetIndexByXy(x, y);
+    if (presetIndex >= 0)
+    {
+        ChipLogError(Zcl, "[ZB] MoveToColor x=%u y=%u -> button preset %d",
+                     static_cast<unsigned>(x), static_cast<unsigned>(y), presetIndex + 1);
+        MatterApplyRemoteButtonPresetByIndex(static_cast<uint8_t>(presetIndex));
+        return;
+    }
+
+    ChipLogError(Zcl, "[ZB] unknown MoveToColor x=%u y=%u", static_cast<unsigned>(x), static_cast<unsigned>(y));
+}
 
 namespace {
 
