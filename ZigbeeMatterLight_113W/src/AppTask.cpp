@@ -70,6 +70,7 @@ extern "C" {
 #include <platform/CHIPDeviceLayer.h>
 #include <platform/CommissionableDataProvider.h>
 #include <platform/PersistedStorage.h>
+#include <platform/silabs/SilabsConfig.h>
 #include <platform/silabs/tracing/SilabsTracingMacros.h>
 #include <system/SystemClock.h>
 #include "sl_pwm.h"
@@ -186,8 +187,10 @@ constexpr ButtonPresetEntry kPresets[13] = {       //后面两个CT表用于上�
     { 0,    1000, 315,  0,    0,   32  }, // 13
 };
 
-constexpr const char kFactoryResetBootKey[] = "FactoryResetBoot";
 constexpr const char kButtonPresetMemoryKey[] = "BtnPresetMem";
+// Survives FactoryResetConfig + KVS ErasePartition (Counter region is retained).
+constexpr uint8_t kFactoryResetBootCounterIdx = 0x10u;
+constexpr uint32_t kFactoryResetBootMarkValue = 1u;
 constexpr uint8_t kPresetCount = 13;
 constexpr uint16_t kColorTempMiredsPhysicalMin = 154u; // 6500K
 constexpr uint16_t kColorTempMiredsPhysicalMax = 454u; // ~2200K
@@ -267,6 +270,42 @@ PreEffectState sIdentifyEffectState = {};
 
 static bool sDisableStartupEffects = false;
 
+static bool ConsumeFactoryResetBootMark()
+{
+    using chip::DeviceLayer::Internal::SilabsConfig;
+
+    uint32_t mark = 0;
+    const CHIP_ERROR err = SilabsConfig::ReadConfigValueCounter(kFactoryResetBootCounterIdx, mark);
+    if (err != CHIP_NO_ERROR || mark != kFactoryResetBootMarkValue)
+    {
+        return false;
+    }
+
+    // Clear so a normal power-cycle does not replay the confirmation blink.
+    const CHIP_ERROR clearErr = SilabsConfig::WriteConfigValueCounter(kFactoryResetBootCounterIdx, 0u);
+    if (clearErr != CHIP_NO_ERROR)
+    {
+        ChipLogError(Zcl, "[DIM] failed to clear reset boot mark: %" CHIP_ERROR_FORMAT, clearErr.Format());
+    }
+    return true;
+}
+
+static void StoreFactoryResetBootMark()
+{
+    using chip::DeviceLayer::Internal::SilabsConfig;
+
+    // Must use Counter (not KVS): DoFactoryReset() calls ErasePartition() and wipes all KVS keys.
+    const CHIP_ERROR err = SilabsConfig::WriteConfigValueCounter(kFactoryResetBootCounterIdx, kFactoryResetBootMarkValue);
+    if (err != CHIP_NO_ERROR)
+    {
+        ChipLogError(Zcl, "[DIM] failed to store reset boot mark: %" CHIP_ERROR_FORMAT, err.Format());
+    }
+    else
+    {
+        ChipLogError(Zcl, "[DIM] reset boot mark stored (counter, survives factory reset)");
+    }
+}
+
 static uint8_t LevelToPercent(uint8_t level254)
 {
     return static_cast<uint8_t>((static_cast<uint16_t>(level254) * 100u + 127u) / 254u);
@@ -344,7 +383,8 @@ static bool ShouldSkipEffect(AppTask::EffectMode mode)
 
     return (mode == AppTask::EffectMode::BootBreathing)
         || (mode == AppTask::EffectMode::Identify)
-        || (mode == AppTask::EffectMode::PairSuccess);
+        || (mode == AppTask::EffectMode::PairSuccess)
+        || (mode == AppTask::EffectMode::ResetComplete);
 }
 
 static void GetPresetBasePermilles(size_t presetIndex, uint16_t & w, uint16_t & r, uint16_t & g, uint16_t & b)
@@ -1190,13 +1230,10 @@ CHIP_ERROR AppTask::AppInit()
     bool hasPowerOnMemory = MatterRestorePowerOnMemoryIfAny();
     RestoreButtonPresetMemoryState();
 
-    uint8_t resetBootMark = 0;
-    const CHIP_ERROR resetBootErr = chip::DeviceLayer::PersistedStorage::KeyValueStoreMgr().Get(kFactoryResetBootKey, &resetBootMark,
-                                                                                                sizeof(resetBootMark));
-    const bool hasResetBootMark = (resetBootErr == CHIP_NO_ERROR && resetBootMark == 1);
+    const bool hasResetBootMark = ConsumeFactoryResetBootMark();
     if (hasResetBootMark)
     {
-        chip::DeviceLayer::PersistedStorage::KeyValueStoreMgr().Delete(kFactoryResetBootKey);
+        ChipLogError(Zcl, "[DIM] factory-reset boot mark found — play white confirm blink");
     }
 
     if (!BaseApplication::sIsProvisioned)
@@ -1206,9 +1243,8 @@ CHIP_ERROR AppTask::AppInit()
 
         if (hasResetBootMark)
         {
-            // 长按恢复出厂后的冷启动：先灭灯 2s，再由 sResetOffTimer 触发 StartBootBreathing()
-            ApplyRgbwEffect(0, 0, 0, 0);
-            osTimerStart(sResetOffTimer, pdMS_TO_TICKS(APP_RESET_BOOT_OFF_MS));
+            // 长按恢复出厂后的冷启动：65% 白光 OFF-ON-OFF-ON-OFF，再淡入出厂呼吸/配网
+            BeginResetCompleteEffect();
         }
         else
         {
@@ -1474,13 +1510,8 @@ void AppTask::TriggerFactoryResetAfterLongPress()
     gResetLastFaultSignature = kLongPressResetSignature;
     gResetLastFaultValue     = 10;
 
-    uint8_t mark = 1;
-    CHIP_ERROR markErr = chip::DeviceLayer::PersistedStorage::KeyValueStoreMgr().Put(kFactoryResetBootKey, &mark, sizeof(mark));
-    if (markErr != CHIP_NO_ERROR)
-    {
-        ChipLogError(Zcl, "[DIM] failed to store reset boot marker: %" CHIP_ERROR_FORMAT, markErr.Format());
-    }
-    ChipLogError(Zcl, "[DIM] long press 10s reset triggered");
+    StoreFactoryResetBootMark();
+    ChipLogError(Zcl, "[DIM] long press 13s reset triggered");
     chip::Server::GetInstance().ScheduleFactoryReset();
 }
 
@@ -1530,7 +1561,32 @@ void AppTask::FinishResetWarnEndEffect()
 
     RestoreState(sPreEffectState);
     sLongPressMs = 0;
-    ChipLogError(Zcl, "[DIM] long press interrupted between 5s and 10s");
+    ChipLogError(Zcl, "[DIM] long press interrupted between warn and reset");
+}
+
+void AppTask::BeginResetCompleteEffect()
+{
+    if (ShouldSkipEffect(EffectMode::ResetComplete))
+    {
+        StartBootBreathing();
+        return;
+    }
+
+    sStartupSingleWhiteLock = true;
+    // Allow direct PWM during confirmation blink (attribute path may still be suppressed).
+    MatterSetBootOutputSuppress(0);
+    MatterApplyRgbwNow(0u, 0u, 0u, 0u);
+    StartEffect(EffectMode::ResetComplete);
+    ChipLogError(Zcl, "[DIM] reset complete blink start (65%% OFF-ON-OFF-ON-OFF)");
+}
+
+void AppTask::FinishResetCompleteEffect()
+{
+    StopEffect();
+    ApplyRgbwEffect(0, 0, 0, 0);
+    ChipLogError(Zcl, "[DIM] reset complete blink done, fade-in to boot breath");
+    // FADE-IN to default: 出厂白光呼吸 + 配网窗口
+    StartBootBreathing();
 }
 
 void AppTask::BeginPairSuccessEffect(const char * reason)
@@ -1595,9 +1651,9 @@ void AppTask::StartEffect(EffectMode mode)
         return;
     }
 
-    if (mode == EffectMode::ResetWarn || mode == EffectMode::ResetWarnEnd)
+    if (mode == EffectMode::ResetWarn || mode == EffectMode::ResetWarnEnd || mode == EffectMode::ResetComplete)
     {
-        // Fast/slow red blink must not park SM15135E in standby between flashes.
+        // Fast/slow red blink / white reset-complete blink must not park SM15135E in standby.
         MatterSetSm15135eStandbyAllowed(0);
     }
 
@@ -1611,7 +1667,8 @@ void AppTask::StopEffect()
 {
     ChipLogError(Zcl, "[EFFECT] stop mode=%u tick=%u", static_cast<unsigned>(sEffectMode),
                  static_cast<unsigned>(sEffectTickMs));
-    if (sEffectMode == EffectMode::ResetWarn || sEffectMode == EffectMode::ResetWarnEnd)
+    if (sEffectMode == EffectMode::ResetWarn || sEffectMode == EffectMode::ResetWarnEnd
+        || sEffectMode == EffectMode::ResetComplete)
     {
         MatterSetSm15135eStandbyAllowed(1);
     }
@@ -1724,6 +1781,26 @@ void AppTask::RunEffectStep()
         return;
     }
 
+    // 恢复出厂完成后的确认灯效：65% 白光 OFF-ON-OFF-ON-OFF，再淡入默认呼吸
+    if (sEffectMode == EffectMode::ResetComplete)
+    {
+        const uint32_t segMs   = APP_RESET_COMPLETE_BLINK_MS;
+        const uint32_t totalMs = segMs * 5u; // OFF ON OFF ON OFF
+        const uint8_t levelPct = APP_RESET_COMPLETE_LEVEL_PCT;
+
+        if (sEffectTickMs < totalMs)
+        {
+            const uint32_t phase = sEffectTickMs / segMs; // 0..4
+            const bool on = (phase == 1u || phase == 3u);
+            ApplyWhiteEffectLevel(on ? levelPct : 0u);
+            sEffectTickMs += APP_EFFECT_TICK_MS;
+            return;
+        }
+
+        FinishResetCompleteEffect();
+        return;
+    }
+
     if (sEffectMode == EffectMode::PairSuccess)
     {
         const uint32_t blinkOn = APP_PAIR_SUCCESS_BLINK_ON_MS;
@@ -1782,6 +1859,12 @@ void AppTask::OnButtonPressed()
     if (sIdentifyActive || sEffectMode == EffectMode::Identify)
     {
         // Identify 优先级最高：按键不改变 Identify 输出
+        return;
+    }
+
+    if (sEffectMode == EffectMode::ResetComplete)
+    {
+        // 复位完成确认闪期间忽略按键，避免打断 OFF-ON-OFF-ON-OFF
         return;
     }
 
@@ -1859,7 +1942,7 @@ void AppTask::OnButtonReleased()
             return;
         }
 
-        // 5~10s 快闪红灯警告期间松手：立即恢复先前状态，不触发慢闪收尾
+        // 8~13s 快闪红灯警告期间松手：立即恢复先前状态
         if (sEffectMode == EffectMode::ResetWarn || sResetWarnActive)
         {
             sBootBreathExitPending = false;
@@ -2046,13 +2129,25 @@ void AppTask::HandleLongPressTick()
         sDimmingActive = false;
         MatterSetButtonDimmingActive(0);
         StartEffect(EffectMode::ResetWarn);
-        ChipLogError(Zcl, "[DIM] long press 5s warning");
+        ChipLogError(Zcl, "[DIM] long press 8s warning");
     }
 
     if (!sResetTriggered && sLongPressMs >= APP_LONG_PRESS_RESET_MS)
     {
+        // 满 13s：停掉红灯快闪，直接恢复出厂（不再做灭/亮慢闪收尾）
         sResetTriggered = true;
-        StartResetWarnEndEffect(true);
+        sDimmingActive = false;
+        osTimerStop(sLongPressTimer);
+        if (sEffectMode == EffectMode::ResetWarn || sEffectMode == EffectMode::ResetWarnEnd)
+        {
+            StopEffect();
+        }
+        sResetWarnActive = false;
+        sResetEndSequenceActive = false;
+        sResetPendingAfterWarnEnd = false;
+        ApplyRgbwEffect(0, 0, 0, 0);
+        ChipLogError(Zcl, "[DIM] long press 13s reached — factory reset now");
+        TriggerFactoryResetAfterLongPress();
         return;
     }
 
@@ -2206,6 +2301,7 @@ void AppTask::ButtonTimerEventHandler(AppEvent * aEvent)
 
     if (ctx == kTimerCtxResetOff)
     {
+        // Legacy path retained for timer object; reset-complete now uses EffectMode::ResetComplete.
         StartBootBreathing();
         return;
     }

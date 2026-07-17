@@ -1,0 +1,5 @@
+{
+    "cmake.sourceDirectory": "/home/hans/SimplicityStudio/v6_workspace/ZigbeeMatterLightSolution_SixG301M113W/ZigbeeMatterLightSolution_SixG301M113W_cmake",
+    "silabs.customBoardSettings.interface": "SWD",
+    "silabs.customBoardSettings.deviceName": "SIMG301M113WIH"
+}
