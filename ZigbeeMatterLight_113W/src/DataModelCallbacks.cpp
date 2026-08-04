@@ -740,6 +740,22 @@ static uint8_t Level254To255(uint8_t level254)
     return static_cast<uint8_t>((static_cast<uint16_t>(level254) * 255u) / 254u);
 }
 
+// Hardware floor: App MinLevel can be 1, but output must not go below the button dim floor
+// (~10%). Color/CT updates must use the same floor, otherwise switching color after App-min
+// brightness applies raw CurrentLevel=1 and looks much darker than the previous min.
+static uint8_t ClampLevel254ForHardware(uint8_t level254)
+{
+    if (level254 < APP_BUTTON_LEVEL_MIN)
+    {
+        return static_cast<uint8_t>(APP_BUTTON_LEVEL_MIN);
+    }
+    if (level254 > APP_LEVEL_MAX)
+    {
+        return static_cast<uint8_t>(APP_LEVEL_MAX);
+    }
+    return level254;
+}
+
 static void ComputeCtRgbw(uint16_t mireds, uint8_t level254, uint8_t & rOut, uint8_t & gOut, uint8_t & bOut,
                           uint16_t & wPermilleOut);
 static void ComputePresetRgbw(uint8_t level254, uint16_t & r, uint16_t & g, uint16_t & b, uint16_t & wPermilleOut);
@@ -2175,6 +2191,7 @@ extern "C" void MatterRestoreOutputState(uint8_t r, uint8_t g, uint8_t b, uint8_
             level254 = brightness.Value();
         }
         chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+        level254 = ClampLevel254ForHardware(level254);
         ComputeCtRgbw(g_colorTempMireds, level254, fadeR, fadeG, fadeB, fadeWPermille);
     }
 
@@ -2189,9 +2206,18 @@ static void RestoreMatterLevel254(uint8_t level254)
 {
     const bool prevSuppress = g_suppressAttributeHwOutput;
     g_suppressAttributeHwOutput = true;
-    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    // PostAttributeChange already holds the chip stack lock; nesting LockChipStack here
+    // can deadlock (or stall AppTask) on non-recursive wait paths.
+    const bool needLock = !chip::DeviceLayer::PlatformMgr().IsChipStackLockedByCurrentThread();
+    if (needLock)
+    {
+        chip::DeviceLayer::PlatformMgr().LockChipStack();
+    }
     LevelControl::Attributes::CurrentLevel::Set(1, level254);
-    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+    if (needLock)
+    {
+        chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+    }
     g_suppressAttributeHwOutput = prevSuppress;
     g_memLevel = level254;
 #if defined(SL_CATALOG_ZIGBEE_ZCL_FRAMEWORK_CORE_PRESENT)
@@ -2202,26 +2228,22 @@ static void RestoreMatterLevel254(uint8_t level254)
 static void LogLevelRgbwDuty(uint8_t level254, const char * modeTag, uint8_t r, uint8_t g, uint8_t b, uint16_t wPermille,
                              uint16_t kelvin = 0u)
 {
-    const uint32_t wCompare = WhitePermilleToCompare(wPermille);
-    if (kelvin > 0u)
-    {
-        ChipLogError(Zcl, "[DIM] Level=%u %s %uK duty W=%u cmp=%u R=%u G=%u B=%u",
-                     static_cast<unsigned>(level254), modeTag, static_cast<unsigned>(kelvin),
-                     static_cast<unsigned>(wPermille), static_cast<unsigned>(wCompare),
-                     static_cast<unsigned>(Rgb8ToPermille(r)), static_cast<unsigned>(Rgb8ToPermille(g)),
-                     static_cast<unsigned>(Rgb8ToPermille(b)));
-    }
-    else
-    {
-        ChipLogError(Zcl, "[DIM] Level=%u %s duty W=%u cmp=%u R=%u G=%u B=%u",
-                     static_cast<unsigned>(level254), modeTag, static_cast<unsigned>(wPermille),
-                     static_cast<unsigned>(wCompare), static_cast<unsigned>(Rgb8ToPermille(r)),
-                     static_cast<unsigned>(Rgb8ToPermille(g)), static_cast<unsigned>(Rgb8ToPermille(b)));
-    }
+    (void) level254;
+    (void) modeTag;
+    (void) r;
+    (void) g;
+    (void) b;
+    (void) wPermille;
+    (void) kelvin;
+    // Level 调光日志已关闭（长按调光时刷屏）
 }
 
 static void ApplyLevel254Hardware(uint8_t level254)
 {
+    level254 = ClampLevel254ForHardware(level254);
+
+    // Always coalesce through ScheduleAttrRgbwFade: App sliders can still deliver bursts of
+    // CurrentLevel updates; starting a full fade on every step stalls the Matter thread.
     if (g_buttonPresetActive)
     {
         uint16_t r = 0;
@@ -2233,7 +2255,7 @@ static void ApplyLevel254Hardware(uint8_t level254)
         const uint8_t gLog = static_cast<uint8_t>(g > 255u ? 255u : g);
         const uint8_t bLog = static_cast<uint8_t>(b > 255u ? 255u : b);
         LogLevelRgbwDuty(level254, "Preset", rLog, gLog, bLog, wPermille);
-        StartRgbwFade(r, g, b, wPermille, APP_COLOR_FADE_MS);
+        ScheduleAttrRgbwFade(r, g, b, wPermille, APP_COLOR_FADE_MS);
     }
     else if (g_isColorTempMode)
     {
@@ -2501,13 +2523,14 @@ void MatterPostAttributeChangeCallback(const chip::app::ConcreteAttributePath & 
             uint16_t mireds = 0;
             memcpy(&mireds, value, sizeof(uint16_t));
             g_colorTempMireds = mireds;
-            uint8_t level254 = 254;
+            uint8_t level254 = APP_LEVEL_MAX;
             app::DataModel::Nullable<uint8_t> brightness;
             if (chip::app::Clusters::LevelControl::Attributes::CurrentLevel::Get(1, brightness)
                 == chip::Protocols::InteractionModel::Status::Success && !brightness.IsNull())
             {
                 level254 = brightness.Value();
             }
+            level254 = ClampLevel254ForHardware(level254);
             uint8_t rOut = 0;
             uint8_t gOut = 0;
             uint8_t bOut = 0;
@@ -2594,12 +2617,16 @@ void MatterPostAttributeChangeCallback(const chip::app::ConcreteAttributePath & 
                              static_cast<unsigned>(g_rgbTargetR), static_cast<unsigned>(g_rgbTargetG),
                              static_cast<unsigned>(g_rgbTargetB));
             }
-            // 获取当前level，映射到0~255
-            uint8_t level = 255;
+            // 获取当前level，映射到0~255（与调光下限一致，避免切色后比 App 最低档更暗）
+            uint8_t level254 = APP_LEVEL_MAX;
             app::DataModel::Nullable<uint8_t> brightness;
-            if (chip::app::Clusters::LevelControl::Attributes::CurrentLevel::Get(1, brightness) == chip::Protocols::InteractionModel::Status::Success && !brightness.IsNull()) {
-                level = Level254To255(brightness.Value());
+            if (chip::app::Clusters::LevelControl::Attributes::CurrentLevel::Get(1, brightness) ==
+                    chip::Protocols::InteractionModel::Status::Success &&
+                !brightness.IsNull())
+            {
+                level254 = brightness.Value();
             }
+            const uint8_t level = Level254To255(ClampLevel254ForHardware(level254));
             // 按level缩放目标RGB
             uint8_t r = (g_rgbTargetR * level) / 255;
             uint8_t g = (g_rgbTargetG * level) / 255;
@@ -2629,13 +2656,16 @@ void MatterPostAttributeChangeCallback(const chip::app::ConcreteAttributePath & 
 
         if (*value < APP_BUTTON_LEVEL_MIN && g_levelAtLastOn >= APP_BUTTON_LEVEL_MIN && !g_buttonDimmingHwActive)
         {
-            // OnOff 联动会把 CurrentLevel 压到 MinLevel(1)。只恢复 Matter 属性，不写硬件：
-            // 关灯时 isOn 仍为 true 的窗口内写硬件会把灯重新点亮；ScheduleAttrRgbwFade 还会在
-            // 40ms 后延迟触发，覆盖随后的关灯 fade。
-            RestoreMatterLevel254(g_levelAtLastOn);
-            ChipLogError(Zcl, "[DIM] reject stack level254=%u, restore=%u (attr only)",
-                         static_cast<unsigned>(*value), static_cast<unsigned>(g_levelAtLastOn));
-            return;
+            // OnOff 关灯前，协议栈常把 CurrentLevel 压到 MinLevel(1)。
+            // 仅在关灯过渡中拒绝该联动；App 在开灯态主动调到低亮度必须放行（硬件下限在
+            // ApplyLevel254Hardware / ClampLevel254ForHardware 内统一处理）。
+            if (g_offTransitionActive)
+            {
+                RestoreMatterLevel254(g_levelAtLastOn);
+                ChipLogError(Zcl, "[DIM] reject off-coupled level254=%u, restore=%u (attr only)",
+                             static_cast<unsigned>(*value), static_cast<unsigned>(g_levelAtLastOn));
+                return;
+            }
         }
 
         if (g_buttonDimmingHwActive)
@@ -2709,9 +2739,6 @@ void MatterPostAttributeChangeCallback(const chip::app::ConcreteAttributePath & 
     // WIP Apply attribute change to Light
     else if (clusterId == LevelControl::Id)
     {
-        ChipLogProgress(Zcl, "Level Control attribute ID: " ChipLogFormatMEI " Type: %u Value: %u, length %u",
-                        ChipLogValueMEI(attributeId), type, (value != nullptr) ? *value : 0u, size);
-
         if (attributeId == LevelControl::Attributes::CurrentLevel::Id && value != nullptr)
         {
             LightMgr().InitiateAction(AppEvent::kEventType_Light, LightingManager::LEVEL_ACTION, value);
@@ -2738,7 +2765,23 @@ void MatterPostAttributeChangeCallback(const chip::app::ConcreteAttributePath & 
     MultiProtocolDataModel::WriteMatterAttributeValueToZigbee(endpointId, clusterId, attributeId, value, type);
 #endif // SL_CATALOG_ZIGBEE_ZCL_FRAMEWORK_CORE_PRESENT
 
-    if (clusterId == OnOff::Id || clusterId == LevelControl::Id || clusterId == ColorControl::Id)
+    // Only persist on meaningful light-state attrs. RemainingTime (and other Level/Color
+    // bookkeeping) fires every transition step and must not restart the NVM debounce timer.
+    if (clusterId == OnOff::Id && attributeId == OnOff::Attributes::OnOff::Id)
+    {
+        MatterSavePowerOnMemorySnapshot();
+    }
+    else if (clusterId == LevelControl::Id && attributeId == LevelControl::Attributes::CurrentLevel::Id)
+    {
+        MatterSavePowerOnMemorySnapshot();
+    }
+    else if (clusterId == ColorControl::Id &&
+             (attributeId == ColorControl::Attributes::ColorTemperatureMireds::Id ||
+              attributeId == ColorControl::Attributes::CurrentHue::Id ||
+              attributeId == ColorControl::Attributes::CurrentSaturation::Id ||
+              attributeId == ColorControl::Attributes::CurrentX::Id ||
+              attributeId == ColorControl::Attributes::CurrentY::Id ||
+              attributeId == ColorControl::Attributes::ColorMode::Id))
     {
         MatterSavePowerOnMemorySnapshot();
     }

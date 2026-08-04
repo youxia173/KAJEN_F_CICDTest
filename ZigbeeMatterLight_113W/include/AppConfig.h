@@ -118,6 +118,11 @@
 #define APP_RESET_COMPLETE_BLINK_MS 200u
 #define APP_RESET_COMPLETE_LEVEL_PCT 65u
 
+// AppTask queue: default SDK size (10) overflows when Matter/Zigbee/timers burst.
+#ifndef APP_EVENT_QUEUE_SIZE
+#define APP_EVENT_QUEUE_SIZE 32
+#endif
+
 // Lighting transition timings
 #define APP_ONOFF_FADE_MS 400u
 #define APP_COLOR_FADE_MS 400u

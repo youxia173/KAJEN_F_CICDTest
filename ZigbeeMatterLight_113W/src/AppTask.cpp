@@ -188,6 +188,8 @@ constexpr ButtonPresetEntry kPresets[13] = {       //后面两个CT表用于上�
 };
 
 constexpr const char kButtonPresetMemoryKey[] = "BtnPresetMem";
+// 未配网时用户按过键：掉电后跳过白光呼吸，恢复掉电前状态。随 factory reset 清 KVS 后失效。
+constexpr const char kUnprovUserTouchedKey[] = "UnprovTouched";
 // Survives FactoryResetConfig + KVS ErasePartition (Counter region is retained).
 constexpr uint8_t kFactoryResetBootCounterIdx = 0x10u;
 constexpr uint32_t kFactoryResetBootMarkValue = 1u;
@@ -303,6 +305,38 @@ static void StoreFactoryResetBootMark()
     else
     {
         ChipLogError(Zcl, "[DIM] reset boot mark stored (counter, survives factory reset)");
+    }
+}
+
+static bool HasUnprovisionedUserTouched()
+{
+    uint8_t mark = 0;
+    const CHIP_ERROR err =
+        chip::DeviceLayer::PersistedStorage::KeyValueStoreMgr().Get(kUnprovUserTouchedKey, &mark, sizeof(mark));
+    return (err == CHIP_NO_ERROR && mark == 1u);
+}
+
+static void MarkUnprovisionedUserTouched()
+{
+    if (BaseApplication::sIsProvisioned)
+    {
+        return;
+    }
+    if (HasUnprovisionedUserTouched())
+    {
+        return;
+    }
+
+    uint8_t mark = 1u;
+    const CHIP_ERROR err =
+        chip::DeviceLayer::PersistedStorage::KeyValueStoreMgr().Put(kUnprovUserTouchedKey, &mark, sizeof(mark));
+    if (err != CHIP_NO_ERROR)
+    {
+        ChipLogError(Zcl, "[DIM] failed to store unprov user-touched mark: %" CHIP_ERROR_FORMAT, err.Format());
+    }
+    else
+    {
+        ChipLogError(Zcl, "[DIM] unprov user-touched marked (skip breath on next power-on)");
     }
 }
 
@@ -1238,17 +1272,24 @@ CHIP_ERROR AppTask::AppInit()
 
     if (!BaseApplication::sIsProvisioned)
     {
-        const bool doBootBreath = !sDisableStartupEffects;
-        sStartupSingleWhiteLock = doBootBreath;
+        const bool unprovRestore = !hasResetBootMark && HasUnprovisionedUserTouched() && hasPowerOnMemory;
+        const bool doBootBreath  = !sDisableStartupEffects && !unprovRestore;
+        sStartupSingleWhiteLock  = doBootBreath;
 
         if (hasResetBootMark)
         {
             // 长按恢复出厂后的冷启动：65% 白光 OFF-ON-OFF-ON-OFF，再淡入出厂呼吸/配网
             BeginResetCompleteEffect();
         }
+        else if (unprovRestore)
+        {
+            // 未配网但按键操作过：恢复掉电前状态，不再白光呼吸（配网窗口仍打开）
+            StartCommissioningWindow();
+            ChipLogError(Zcl, "[DIM] unprov power-on: restore last state, skip boot breath");
+        }
         else
         {
-            // 首次上电未配网：开配网窗口 + 启动白光呼吸
+            // 首次上电未配网 / 未按过键：开配网窗口 + 启动白光呼吸
             StartCommissioningWindow();
             StartBootBreathing();
         }
@@ -1275,6 +1316,9 @@ CHIP_ERROR AppTask::AppInit()
 
     // Zigbee::RequestStart() runs after AppInit and may replay CT/OnOff attributes that
     // flash white PWM. Re-apply power-on output once init finishes, then allow attribute HW.
+    const bool reapplyPowerOn = hasPowerOnMemory
+        && (BaseApplication::sIsProvisioned
+            || (!hasResetBootMark && HasUnprovisionedUserTouched()));
     chip::DeviceLayer::PlatformMgr().ScheduleWork(
         [](intptr_t context) {
             if (context != 0)
@@ -1283,7 +1327,7 @@ CHIP_ERROR AppTask::AppInit()
             }
             MatterSetBootOutputSuppress(0);
         },
-        BaseApplication::sIsProvisioned ? 1 : 0);
+        reapplyPowerOn ? 1 : 0);
 
     return err;
 }
@@ -1868,6 +1912,9 @@ void AppTask::OnButtonPressed()
         return;
     }
 
+    // 未配网时任意有效按键操作：标记后断电再上电跳过白光呼吸
+    MarkUnprovisionedUserTouched();
+
     if (sEffectMode == EffectMode::ResetWarn || sEffectMode == EffectMode::ResetWarnEnd || sResetEndSequenceActive)
     {
         CancelResetWarningSequence();
@@ -2043,6 +2090,31 @@ void AppTask::HandleSingleClick()
     {
         MatterSetOffTransitionActive(0);
         MatterSyncLevelBeforeOn();
+
+        // 未配网且尚未双击切过预设：短按开灯用纯 W（预设1），与打断呼吸一致。
+        // 否则会走 Matter CT/RGB 路径，出现 RGB 混色而不是呼吸时的白光。
+        if (!BaseApplication::sIsProvisioned && !sButtonPresetLatched)
+        {
+            uint8_t level254 = kLevelMax;
+            app::DataModel::Nullable<uint8_t> level;
+            if (LevelControl::Attributes::CurrentLevel::Get(LIGHT_ENDPOINT, level) ==
+                    Protocols::InteractionModel::Status::Success &&
+                !level.IsNull() && level.Value() >= APP_BUTTON_LEVEL_MIN)
+            {
+                level254 = level.Value();
+            }
+            else if (MatterGetLevelAtLastOn() >= APP_BUTTON_LEVEL_MIN)
+            {
+                level254 = MatterGetLevelAtLastOn();
+            }
+            LevelControl::Attributes::CurrentLevel::Set(LIGHT_ENDPOINT, level254);
+            chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+            ApplyButtonPresetAtIndex(0, level254);
+            ChipLogError(Zcl, "[DIM] unprov first-on: pure W preset1 level=%u",
+                         static_cast<unsigned>(level254));
+            return;
+        }
+
         ColorControl::ColorModeEnum reportColorMode = ColorControl::ColorModeEnum::kCurrentXAndCurrentY;
         if (sButtonPresetLatched && MatterGetColorSource() == 1u)
         {

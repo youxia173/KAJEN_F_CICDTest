@@ -1532,6 +1532,10 @@ target_include_directories(slc PUBLIC
 )
 
 target_compile_definitions(slc PUBLIC
+    # App MOVE_TO_LEVEL often uses TransitionTime=2 with large level deltas; stepping
+    # CurrentLevel one-by-one floods PostAttributeChange/SPI/Zigbee sync and hangs AppTask.
+    # Jump to target instantly; visual smoothness comes from APP_COLOR_FADE in app code.
+    "IGNORE_LEVEL_CONTROL_CLUSTER_TRANSITION=1"
     "CHIP_CRYPTO_PLATFORM=1"
     "IS_DEMO_LIGHT=1"
     "NVM3_DEFAULT_MAX_OBJECT_SIZE=4092"
