@@ -2068,6 +2068,14 @@ void AppTask::OnButtonReleased()
     }
 
     sClickCount++;
+    // 灯已亮时：第二次短按松手立刻切色，不要再等双击窗口超时（否则会感觉“慢半拍”约 1s）。
+    if (sClickCount >= 2)
+    {
+        sClickCount = 0;
+        osTimerStop(sClickTimer);
+        HandleDoubleClick();
+        return;
+    }
     osTimerStart(sClickTimer, pdMS_TO_TICKS(APP_DOUBLE_CLICK_WINDOW_MS));
 }
 
