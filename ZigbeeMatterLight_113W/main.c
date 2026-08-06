@@ -1,6 +1,6 @@
 /***************************************************************************//**
  * @file main.c
- * @brief main() function.
+ * @brief main() function — called from the RTOS start task (via __wrap_main).
  *******************************************************************************
  * # License
  * <b>Copyright 2025 Silicon Laboratories Inc. www.silabs.com</b>
@@ -27,19 +27,19 @@
  * 3. This notice may not be removed or altered from any source distribution.
  *
  ******************************************************************************/
-#include "app/framework/include/af.h"
+#include "sl_component_catalog.h"
 #include "sl_main_init.h"
 #include "sl_main_kernel.h"
 
 int main(void)
 {
-  // Initialize Silicon Labs device, system, service(s) and protocol stack(s).
+  // Called from the RTOS start task after __wrap_main runs sl_main_init() +
+  // sl_main_kernel_start(). Complete SiSDK module init, then the app hook.
   sl_main_second_stage_init();
 
   app_init();
 
-  sl_zigbee_af_guaranteed_println("[error ][TEST] RTT test log from main.c: app_init completed");
-
+  // Default implementation returns false so the start task exits after init.
   while (sl_main_start_task_should_continue()) {
     app_process_action();
   }

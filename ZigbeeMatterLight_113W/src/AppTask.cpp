@@ -159,7 +159,8 @@ constexpr uint8_t kLevelMax = APP_LEVEL_MAX;
 constexpr uint8_t kLevelMin = APP_BUTTON_LEVEL_MIN;
 
 // Button preset RGBW table (permille 0~1000 = 0~100%). Hardware output scales by CurrentLevel.
-// ctMireds: 预设名称/标称 K（2700/2200/4000/6500），不驱动 PWM；Matter 上报用 WRGB 反算。
+// ctMireds: 色温预设标称 K（非 0）；Matter 上报用 reportX/reportY（CIE xy，与 App 色卡对齐）。
+// hue: 历史字段，彩光上报优先用 reportX/Y 反算显示 HSV。
 struct ButtonPresetEntry
 {
     uint16_t wPermille;
@@ -168,23 +169,25 @@ struct ButtonPresetEntry
     uint16_t bPermille;
     uint16_t ctMireds;
     uint8_t hue;
+    float reportX;
+    float reportY;
 };
 
-constexpr ButtonPresetEntry kPresets[13] = {       //后面两个CT表用于上报给手机
-    // order, name,   W%,    R%,    G%,    B%
-    { 1000, 0,    0,    0,    370, 0   }, // 1  2700K
-    { 400,  1000, 0,    0,    454, 0   }, // 2  2200K (454=physical max mireds)
-    { 400,  0,    230,  550,  250, 0   }, // 3  4000K
-    { 320,  0,    230,  1000, 154, 0   }, // 4  6500K
-    { 0,    1000, 175,  0,    0,   28  }, // 5
-    { 0,    1000, 100,  0,    0,   21  }, // 6
-    { 0,    1000, 0,    0,    0,   11  }, // 7
-    { 0,    1000, 100,  58,   0,   247 }, // 8
-    { 0,    1000, 235,  395,  0,   212 }, // 9
-    { 0,    235,  235,  1000, 0,   155 }, // 10
-    { 0,    510,  825,  510,  0,   113 }, // 11
-    { 0,    510,  1000, 155,  0,   56  }, // 12
-    { 0,    1000, 315,  0,    0,   32  }, // 13
+constexpr ButtonPresetEntry kPresets[13] = {
+    // W,    R,    G,    B,   ctMireds, hue, reportX,  reportY
+    { 1000, 0,    0,    0,    370, 0,   0.458f,  0.41f    }, // 1  2700K
+    { 400,  1000, 0,    0,    454, 0,   0.516f,  0.4365f  }, // 2  2200K
+    { 400,  0,    230,  550,  250, 0,   0.3818f, 0.3797f  }, // 3  4000K
+    { 320,  0,    230,  1000, 154, 0,   0.3155f, 0.3455f  }, // 4  6500K
+    { 0,    1000, 175,  0,    0,   28,  0.64f,   0.35f    }, // 5  Candlelight
+    { 0,    1000, 100,  0,    0,   21,  0.66f,   0.33f    }, // 6  Campfire
+    { 0,    1000, 0,    0,    0,   11,  0.7f,    0.33f    }, // 7  Red
+    { 0,    1000, 100,  58,   0,   247, 0.3790f, 0.3150f  }, // 8  Daisy
+    { 0,    1000, 235,  395,  0,   212, 0.3430f, 0.2740f  }, // 9  Violet
+    { 0,    235,  235,  1000, 0,   155, 0.1764f, 0.1551f  }, // 10 Iceberg
+    { 0,    510,  825,  510,  0,   113, 0.2790f, 0.3540f  }, // 11 Teal
+    { 0,    510,  1000, 155,  0,   56,  0.3450f, 0.4190f  }, // 12 Mint tea
+    { 0,    1000, 315,  0,    0,   32,  0.4810f, 0.4450f  }, // 13 Sunny day（待确认）
 };
 
 constexpr const char kButtonPresetMemoryKey[] = "BtnPresetMem";
@@ -664,6 +667,26 @@ static uint16_t CtPresetReportMireds(const ButtonPresetEntry & p)
     return ClampCtMiredsForMatter(p.ctMireds);
 }
 
+static uint16_t FloatCieToMatterCoord(float v)
+{
+    if (v <= 0.0f)
+    {
+        return 0u;
+    }
+    if (v >= 1.0f)
+    {
+        return 0xFEFFu;
+    }
+    const uint32_t raw = static_cast<uint32_t>(v * 65536.0f + 0.5f);
+    return static_cast<uint16_t>(raw > 0xFEFFu ? 0xFEFFu : raw);
+}
+
+static void PresetReportCieXy(const ButtonPresetEntry & p, uint16_t & xOut, uint16_t & yOut)
+{
+    xOut = FloatCieToMatterCoord(p.reportX);
+    yOut = FloatCieToMatterCoord(p.reportY);
+}
+
 static ColorControl::ColorModeEnum SyncMatterAttributesForPreset(size_t presetIndex)
 {
     if (presetIndex >= kPresetCount)
@@ -672,17 +695,18 @@ static ColorControl::ColorModeEnum SyncMatterAttributesForPreset(size_t presetIn
     }
 
     const ButtonPresetEntry & p = kPresets[presetIndex];
+    uint16_t cieX = 0u;
+    uint16_t cieY = 0u;
+    PresetReportCieXy(p, cieX, cieY);
+
     if (p.ctMireds != 0u)
     {
         const uint16_t reportMireds = CtPresetReportMireds(p);
-        uint16_t cieX               = 0u;
-        uint16_t cieY               = 0u;
-        MiredsToCieXy(reportMireds, cieX, cieY);
         uint8_t displayHue          = 0u;
         uint8_t displaySat          = 0u;
         CtDisplayHueSatFromMireds(cieX, cieY, displayHue, displaySat);
 
-        // Matter/App：ColorMode=CT + mireds；hue/sat 仅黑体轨迹显示值，勿用 WRGB 硬件混色反算。
+        // Matter/App：ColorMode=CT + mireds；XY 用色卡坐标（非 mireds 估算 / WRGB 反算）。
         ColorControl::Attributes::ColorMode::Set(LIGHT_ENDPOINT, ColorControl::ColorModeEnum::kColorTemperatureMireds);
         ColorControl::Attributes::ColorTemperatureMireds::Set(LIGHT_ENDPOINT, reportMireds);
         ColorControl::Attributes::CurrentHue::Set(LIGHT_ENDPOINT, displayHue);
@@ -691,26 +715,32 @@ static ColorControl::ColorModeEnum SyncMatterAttributesForPreset(size_t presetIn
         ColorControl::Attributes::CurrentY::Set(LIGHT_ENDPOINT, cieY);
         SyncEnhancedColorMode(ColorControl::ColorModeEnum::kColorTemperatureMireds);
         ChipLogError(Zcl,
-                     "[DIM] preset=%u report CT mireds=%u (nominal=%u) display_hue=%u sat=%u xy=%u,%u wrgb_hw=%u,%u,%u,%u",
+                     "[DIM] preset=%u report CT mireds=%u xy=%.4f,%.4f (%u,%u) hue=%u sat=%u wrgb_hw=%u,%u,%u,%u",
                      static_cast<unsigned>(presetIndex + 1u), static_cast<unsigned>(reportMireds),
-                     static_cast<unsigned>(p.ctMireds), static_cast<unsigned>(displayHue),
-                     static_cast<unsigned>(displaySat), static_cast<unsigned>(cieX), static_cast<unsigned>(cieY),
+                     static_cast<double>(p.reportX), static_cast<double>(p.reportY),
+                     static_cast<unsigned>(cieX), static_cast<unsigned>(cieY),
+                     static_cast<unsigned>(displayHue), static_cast<unsigned>(displaySat),
                      static_cast<unsigned>(p.wPermille), static_cast<unsigned>(p.rPermille),
                      static_cast<unsigned>(p.gPermille), static_cast<unsigned>(p.bPermille));
         return ColorControl::ColorModeEnum::kColorTemperatureMireds;
     }
 
-    const uint8_t hue = p.hue;
-    const uint8_t sat = PermilleRgbToMatterSaturation(p.rPermille, p.gPermille, p.bPermille);
-    ColorControl::Attributes::ColorMode::Set(LIGHT_ENDPOINT, ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation);
+    uint8_t hue = 0u;
+    uint8_t sat = 0u;
+    CieXyToMatterHueSat(cieX, cieY, hue, sat);
+    ColorControl::Attributes::ColorMode::Set(LIGHT_ENDPOINT, ColorControl::ColorModeEnum::kCurrentXAndCurrentY);
+    ColorControl::Attributes::CurrentX::Set(LIGHT_ENDPOINT, cieX);
+    ColorControl::Attributes::CurrentY::Set(LIGHT_ENDPOINT, cieY);
     ColorControl::Attributes::CurrentHue::Set(LIGHT_ENDPOINT, hue);
     ColorControl::Attributes::CurrentSaturation::Set(LIGHT_ENDPOINT, sat);
-    SyncEnhancedColorMode(ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation);
-    ChipLogError(Zcl, "[DIM] preset=%u report HSV hue=%u sat=%u wrgb=%u,%u,%u,%u",
-                 static_cast<unsigned>(presetIndex + 1u), static_cast<unsigned>(hue), static_cast<unsigned>(sat),
-                 static_cast<unsigned>(p.wPermille), static_cast<unsigned>(p.rPermille),
-                 static_cast<unsigned>(p.gPermille), static_cast<unsigned>(p.bPermille));
-    return ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation;
+    SyncEnhancedColorMode(ColorControl::ColorModeEnum::kCurrentXAndCurrentY);
+    ChipLogError(Zcl, "[DIM] preset=%u report XY=%.4f,%.4f (%u,%u) hue=%u sat=%u wrgb=%u,%u,%u,%u",
+                 static_cast<unsigned>(presetIndex + 1u), static_cast<double>(p.reportX),
+                 static_cast<double>(p.reportY), static_cast<unsigned>(cieX), static_cast<unsigned>(cieY),
+                 static_cast<unsigned>(hue), static_cast<unsigned>(sat), static_cast<unsigned>(p.wPermille),
+                 static_cast<unsigned>(p.rPermille), static_cast<unsigned>(p.gPermille),
+                 static_cast<unsigned>(p.bPermille));
+    return ColorControl::ColorModeEnum::kCurrentXAndCurrentY;
 }
 
 static void LogReportedLightState(ColorControl::ColorModeEnum colorMode, bool reportOnOffLevel)
@@ -800,6 +830,9 @@ static void ReportLightColorAttributes(ColorControl::ColorModeEnum colorMode)
     {
         MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, ColorControl::Id, ColorControl::Attributes::CurrentX::Id);
         MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, ColorControl::Id, ColorControl::Attributes::CurrentY::Id);
+        MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, ColorControl::Id, ColorControl::Attributes::CurrentHue::Id);
+        MatterReportingAttributeChangeCallback(LIGHT_ENDPOINT, ColorControl::Id,
+                                             ColorControl::Attributes::CurrentSaturation::Id);
     }
     else
     {
@@ -1509,6 +1542,16 @@ void AppTask::ApplyWhiteEffectLevel(uint8_t level)
 
 static void RestoreState(const PreEffectState & state)
 {
+    const bool restoreOff = (state.onOff == 0u);
+
+    // Attribute rewrites (especially CT) can drive PWM even when OnOff stays false.
+    // Suppress HW during the restore write so Identify end cannot light a previously-off lamp.
+    MatterSetBootOutputSuppress(1);
+    if (restoreOff)
+    {
+        MatterSetOffTransitionActive(1);
+    }
+
     chip::DeviceLayer::PlatformMgr().LockChipStack();
     OnOff::Attributes::OnOff::Set(LIGHT_ENDPOINT, state.onOff != 0u);
     LevelControl::Attributes::CurrentLevel::Set(LIGHT_ENDPOINT, state.level);
@@ -1517,9 +1560,14 @@ static void RestoreState(const PreEffectState & state)
     ColorControl::Attributes::CurrentSaturation::Set(LIGHT_ENDPOINT, state.sat);
     chip::DeviceLayer::PlatformMgr().UnlockChipStack();
 
-    if (state.onOff == 0u)
+    MatterSetBootOutputSuppress(0);
+
+    if (restoreOff)
     {
+        // Restore color-mode metadata, then force PWM off (snap — identify may end on an ON blink phase).
         MatterRestoreOutputState(0, 0, 0, 0, state.colorSource, 0);
+        MatterApplyRgbwNow(0, 0, 0, 0);
+        MatterSetOffTransitionActive(0);
         MatterSetButtonPresetActive(0);
         sButtonPresetLatched = false;
         SaveButtonPresetMemoryState();
@@ -2011,6 +2059,10 @@ void AppTask::OnButtonReleased()
             if (sDimmingActive)
             {
                 MatterFinalizeButtonDimming(sDimmingLevelQ16, kLevelMin, kLevelMax);
+                // 下次长按走相反方向：调暗→调亮→调暗…
+                sDimmingDirection = static_cast<int8_t>(-sDimmingDirection);
+                ChipLogError(Zcl, "[DIM] long-press dim end, next dir=%s",
+                             (sDimmingDirection > 0) ? "up" : "down");
             }
             sBootBreathExitPending = false;
             sDimmingActive = false;
@@ -2256,15 +2308,18 @@ void AppTask::HandleLongPressTick()
             }
 
             const uint8_t curLevel = static_cast<uint8_t>(sDimmingLevelQ16 >> 16);
-            // 每次长按开始时按当前亮度选方向：默认调暗；已在最低档则调亮。
+            // 方向在上次有效调光松手后已翻转；到端点时强制改向（最低只能调亮，最高只能调暗）。
             if (curLevel <= kLevelMin)
             {
                 sDimmingDirection = 1;
             }
-            else
+            else if (curLevel >= kLevelMax)
             {
                 sDimmingDirection = -1;
             }
+            ChipLogError(Zcl, "[DIM] long-press dim start level=%u dir=%s",
+                         static_cast<unsigned>(curLevel),
+                         (sDimmingDirection > 0) ? "up" : "down");
             sDimmingOriginLevelQ16 = sDimmingLevelQ16;
             sDimmingStartTick = osKernelGetTickCount();
             sDimmingLastAppliedLevel = curLevel;

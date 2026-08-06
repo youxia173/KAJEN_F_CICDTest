@@ -83,8 +83,11 @@ struct RgbwFadeState
 
 static constexpr uint8_t kFadeModeForceLinearRgb     = 0x01u;
 static constexpr uint8_t kFadeModeStaggerRgbAfterW    = 0x02u;
+// CT/W+RGB 关灯：RGB 用 gamma>1 的剩余亮度曲线，低亮度段比 W 更快压暗，避免尾段偏色。
+static constexpr uint8_t kFadeModeOffFadeAccelRgb     = 0x04u;
 static constexpr float kFadeStaggerRgbStart          = 0.35f;
 static constexpr uint16_t kFadeStaggerWDeltaMinPermille = 150u;
+static constexpr float kOffFadeRgbGamma              = 1.85f;
 
 static RgbwFadeState g_rgbwFade = { false, 0, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 static osTimerId_t g_rgbwFadeTimer = nullptr;
@@ -572,6 +575,13 @@ static void RgbwFadeTimerCallback(void * context)
             tRgb = (t - kFadeStaggerRgbStart) / (1.0f - kFadeStaggerRgbStart);
         }
     }
+    if ((g_rgbwFade.fadeMode & kFadeModeOffFadeAccelRgb) != 0u)
+    {
+        // remaining = (1-t)^gamma → same t, smaller remaining RGB near the end of off-fade.
+        const float rem = 1.0f - tRgb;
+        const float remRgb = (rem <= 0.0f) ? 0.0f : ((rem >= 1.0f) ? 1.0f : powf(rem, kOffFadeRgbGamma));
+        tRgb = 1.0f - remRgb;
+    }
 
     uint16_t r = 0;
     uint16_t g = 0;
@@ -579,13 +589,15 @@ static void RgbwFadeTimerCallback(void * context)
     const bool forceLinear = (g_rgbwFade.fadeMode & kFadeModeForceLinearRgb) != 0u;
     InterpolateFadeRgb(g_rgbwFade.startR, g_rgbwFade.startG, g_rgbwFade.startB, g_rgbwFade.targetR, g_rgbwFade.targetG,
                        g_rgbwFade.targetB, tRgb, r, g, b, forceLinear);
-    const uint32_t startCmp = WhitePermilleToCompare(g_rgbwFade.startWPermille);
-    const uint32_t targetCmp = WhitePermilleToCompare(g_rgbwFade.targetWPermille);
-    const uint32_t wCompare = static_cast<uint32_t>(static_cast<int32_t>(startCmp) +
-        ((static_cast<int32_t>(targetCmp) - static_cast<int32_t>(startCmp)) * static_cast<int32_t>(s)) /
+    // Interpolate W in logical permille (same domain as RGB scale-to-off), then map to PWM.
+    // Compare-domain lerp drops W faster than RGB because WhitePermilleToCompare() embeds the
+    // SL9003 MIN duty offset — CT presets (2/3/4) then look RGB-tinted near the end of off-fade.
+    const uint16_t wPermille = static_cast<uint16_t>(static_cast<int32_t>(g_rgbwFade.startWPermille) +
+        ((static_cast<int32_t>(g_rgbwFade.targetWPermille) - static_cast<int32_t>(g_rgbwFade.startWPermille)) *
+         static_cast<int32_t>(s)) /
             static_cast<int32_t>(n));
 
-    ApplyRgbwOutput(r, g, b, wCompare);
+    ApplyRgbwOutput(r, g, b, WhitePermilleToCompare(wPermille));
 }
 
 static void StartRgbwFade(uint16_t targetR, uint16_t targetG, uint16_t targetB, uint16_t targetWPermille,
@@ -688,6 +700,10 @@ static void StartRgbwFade(uint16_t targetR, uint16_t targetG, uint16_t targetB, 
     if (!fadeToOff && dWPermille > kFadeStaggerWDeltaMinPermille && ((sr | sg | sb) != 0u) && ((tr | tg | tb) != 0u))
     {
         fadeMode |= kFadeModeStaggerRgbAfterW;
+    }
+    if (fadeToOff && curWPermille > 0u && ((sr | sg | sb) != 0u))
+    {
+        fadeMode |= kFadeModeOffFadeAccelRgb;
     }
     g_rgbwFade.fadeMode = fadeMode;
 
@@ -1210,6 +1226,12 @@ static void GetFadePositionRgbw(uint16_t * r, uint16_t * g, uint16_t * b, uint16
                 tRgb = (t - kFadeStaggerRgbStart) / (1.0f - kFadeStaggerRgbStart);
             }
         }
+        if ((g_rgbwFade.fadeMode & kFadeModeOffFadeAccelRgb) != 0u)
+        {
+            const float rem = 1.0f - tRgb;
+            const float remRgb = (rem <= 0.0f) ? 0.0f : ((rem >= 1.0f) ? 1.0f : powf(rem, kOffFadeRgbGamma));
+            tRgb = 1.0f - remRgb;
+        }
 
         uint16_t rOut = 0;
         uint16_t gOut = 0;
@@ -1231,13 +1253,10 @@ static void GetFadePositionRgbw(uint16_t * r, uint16_t * g, uint16_t * b, uint16
         }
         if (wPermille != nullptr)
         {
-            const uint32_t startCmp  = WhitePermilleToCompare(g_rgbwFade.startWPermille);
-            const uint32_t targetCmp = WhitePermilleToCompare(g_rgbwFade.targetWPermille);
-            const uint32_t cmp       = static_cast<uint32_t>(static_cast<int32_t>(startCmp) +
-                ((static_cast<int32_t>(targetCmp) - static_cast<int32_t>(startCmp)) *
+            *wPermille = static_cast<uint16_t>(static_cast<int32_t>(g_rgbwFade.startWPermille) +
+                ((static_cast<int32_t>(g_rgbwFade.targetWPermille) - static_cast<int32_t>(g_rgbwFade.startWPermille)) *
                  static_cast<int32_t>(g_rgbwFade.step)) /
                     static_cast<int32_t>(g_rgbwFade.totalSteps));
-            *wPermille = WhiteCompareToPermille(cmp);
         }
         return;
     }
@@ -2179,7 +2198,10 @@ extern "C" void MatterRestoreOutputState(uint8_t r, uint8_t g, uint8_t b, uint8_
     uint8_t fadeG = g;
     uint8_t fadeB = b;
     uint16_t fadeWPermille = WhitePercentToPermille(wDuty > 100u ? 100u : wDuty);
-    if (g_isColorTempMode)
+    // Explicit all-zero RGBW means restore-to-off. Do not recompute CT from CurrentLevel
+    // (Matter keeps level while OnOff=false), or Identify/effect restore will light the lamp.
+    const bool forceOff = (r == 0u && g == 0u && b == 0u && wDuty == 0u);
+    if (g_isColorTempMode && !forceOff)
     {
         uint8_t level254 = g_memLevel;
         app::DataModel::Nullable<uint8_t> brightness;
