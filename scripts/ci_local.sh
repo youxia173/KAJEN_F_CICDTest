@@ -80,7 +80,16 @@ if [[ "${WITH_BUILD}" -eq 1 ]]; then
         echo "ERROR: missing ${CMAKE_DIR}" >&2
         exit 1
     fi
-    (cd "${CMAKE_DIR}" && cmake --build --preset default_config)
+    # Be defensive: in a clean CI checkout, the binaryDir might not exist yet.
+    # If something created a non-directory file at `${CMAKE_DIR}/build`, cmake will fail.
+    if [[ -e "${CMAKE_DIR}/build" && ! -d "${CMAKE_DIR}/build" ]]; then
+        echo "WARN: ${CMAKE_DIR}/build exists but is not a directory; removing"
+        rm -f "${CMAKE_DIR}/build"
+    fi
+    mkdir -p "${CMAKE_DIR}/build"
+
+    # Configure first, then build (more reliable across different CMake versions/CI states).
+    (cd "${CMAKE_DIR}" && cmake --preset project && cmake --build --preset default_config)
     echo "Build artifacts under artifact/ (after packaging step if configured)"
 fi
 
