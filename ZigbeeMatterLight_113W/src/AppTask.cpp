@@ -117,6 +117,7 @@ extern "C" void MatterRestoreOutputState(uint8_t r, uint8_t g, uint8_t b, uint8_
                                             uint8_t presetActive);
 extern "C" void MatterApplyRgbwNow(uint8_t r, uint8_t g, uint8_t b, uint8_t wDuty);
 extern "C" void MatterApplyWhiteBreathPermille(uint16_t permille);
+extern "C" void MatterApplyWhiteBreathPermilleF(float permille);
 extern "C" bool MatterRestorePowerOnMemoryIfAny();
 extern "C" void MatterSavePowerOnMemorySnapshot();
 extern "C" void MatterSetBootOutputSuppress(uint8_t suppress);
@@ -249,6 +250,7 @@ static uint32_t sPairSuccessSessionSeq = 0u;
 static uint8_t sPairSuccessFlashCount = 0u;
 static bool sPairSuccessLastOn = false;
 static uint8_t sCommissioningCompleteCount = 0u;
+static bool sPairSuccessTriggered = false;
 static uint32_t sIdentifySessionSeq = 0u;
 static bool sIdentifyLastOn = false;
 static uint8_t sIdentifyFlashCount = 0u;
@@ -365,20 +367,24 @@ static void ApplyWhitePwmEffect(uint8_t levelPct)
     MatterApplyRgbwNow(0u, 0u, 0u, levelPct);
 }
 
-// 未配网呼吸专用：0~1000‰ 直接写 timer compare（见 MatterApplyWhiteBreathPermille）。
+// 未配网呼吸专用：float ‰ → compare（见 MatterApplyWhiteBreathPermilleF）。
 static void ApplyWhitePwmEffectPermille(uint16_t levelPermille)
 {
     MatterApplyWhiteBreathPermille(levelPermille);
 }
 
+static void ApplyWhitePwmEffectPermilleF(float levelPermille)
+{
+    MatterApplyWhiteBreathPermilleF(levelPermille);
+}
+
 // 未配网白光呼吸缓动：EaseInOutQuad（等价于 cubic-bezier(0.45, 0, 0.55, 1)）。
-// 直接按实时 elapsedMs 浮点计算，不再用离散查表，渐变连续平滑（最终受硬件 PWM ~1334 级限制）。
-// 渐亮段 0→1000‰，渐灭段利用曲线对称性以反向时间得到 1000→0‰。
-static uint16_t BootBreathRampPermille(uint32_t elapsedMs, bool rising)
+// 用 float ‰ 直驱 PWM compare，避免峰顶附近整数‰ 粘滞造成高亮抖动。
+static float BootBreathRampPermilleF(uint32_t elapsedMs, bool rising)
 {
     if (elapsedMs >= APP_BOOT_BREATH_RAMP_MS)
     {
-        return rising ? 1000u : 0u;
+        return rising ? 1000.0f : 0.0f;
     }
 
     float t = static_cast<float>(elapsedMs) / static_cast<float>(APP_BOOT_BREATH_RAMP_MS);
@@ -387,7 +393,6 @@ static uint16_t BootBreathRampPermille(uint32_t elapsedMs, bool rising)
         t = 1.0f - t;
     }
 
-    // EaseInOutQuad: t<0.5 -> 2t² ; t>=0.5 -> 1 - 2(1-t)²
     float eased;
     if (t < 0.5f)
     {
@@ -399,7 +404,7 @@ static uint16_t BootBreathRampPermille(uint32_t elapsedMs, bool rising)
         eased = 1.0f - 2.0f * inv * inv;
     }
 
-    float permille = eased * 1000.0f + 0.5f;
+    float permille = eased * 1000.0f;
     if (permille < 0.0f)
     {
         permille = 0.0f;
@@ -408,7 +413,12 @@ static uint16_t BootBreathRampPermille(uint32_t elapsedMs, bool rising)
     {
         permille = 1000.0f;
     }
-    return static_cast<uint16_t>(permille);
+    return permille;
+}
+
+static uint16_t BootBreathRampPermille(uint32_t elapsedMs, bool rising)
+{
+    return static_cast<uint16_t>(BootBreathRampPermilleF(elapsedMs, rising) + 0.5f);
 }
 
 static bool ShouldSkipEffect(AppTask::EffectMode mode)
@@ -1801,28 +1811,29 @@ void AppTask::RunEffectStep()
         const uint32_t rampMs   = APP_BOOT_BREATH_RAMP_MS;
         const uint32_t topHoldMs = APP_BOOT_BREATH_TOP_HOLD_MS;
         const uint32_t t        = sEffectTickMs % cycleMs;
-        uint16_t whitePermille  = 0u;
+        float whitePermilleF    = 0.0f;
 
         if (t < rampMs)
         {
-            whitePermille = BootBreathRampPermille(t, true);
+            whitePermilleF = BootBreathRampPermilleF(t, true);
         }
         else if (t < (rampMs + topHoldMs))
         {
-            whitePermille = 1000u;
+            whitePermilleF = 1000.0f;
         }
         else if (t < (rampMs + topHoldMs + rampMs))
         {
             const uint32_t td = t - (rampMs + topHoldMs);
-            whitePermille = BootBreathRampPermille(td, false);
+            whitePermilleF = BootBreathRampPermilleF(td, false);
         }
         else
         {
-            whitePermille = 0u;
+            whitePermilleF = 0.0f;
         }
 
-        ApplyWhitePwmEffectPermille(whitePermille);
+        ApplyWhitePwmEffectPermilleF(whitePermilleF);
 
+        const uint16_t whitePermille = static_cast<uint16_t>(whitePermilleF + 0.5f);
         const uint32_t offHoldStart = rampMs + topHoldMs + rampMs;
         if (sPairSuccessPending && t >= offHoldStart && whitePermille == 0u)
         {
@@ -2148,6 +2159,8 @@ void AppTask::HandleSingleClick()
     }
     else
     {
+        // 开灯后第一次长按固定从调暗开始（不等 OnOff 回调，避免部分路径不触发）。
+        ResetDimmingDirectionAfterTurnOn();
         MatterSetOffTransitionActive(0);
         MatterSyncLevelBeforeOn();
 
@@ -2206,6 +2219,12 @@ void AppTask::HandleSingleClick()
         }
     }
     chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+}
+
+void AppTask::ResetDimmingDirectionAfterTurnOn()
+{
+    sDimmingDirection = -1;
+    ChipLogError(Zcl, "[DIM] turn-on: next long-press starts dimming");
 }
 
 void AppTask::HandleDoubleClick()
@@ -2460,12 +2479,13 @@ void AppTask::OnPlatformEvent(const chip::DeviceLayer::ChipDeviceEvent * event, 
     {
         sCommissioningCompleteCount++;
         ChipLogError(Zcl,
-                     "[BLINK2] EVENT commissioning-complete count=%u provisioned=%u breath=%u effect=%u pending=%u",
+                     "[BLINK2] EVENT commissioning-complete count=%u provisioned=%u breath=%u effect=%u pending=%u done=%u",
                      static_cast<unsigned>(sCommissioningCompleteCount),
                      static_cast<unsigned>(BaseApplication::sIsProvisioned ? 1u : 0u),
                      static_cast<unsigned>(sBootBreathingActive ? 1u : 0u),
                      static_cast<unsigned>(sEffectMode),
-                     static_cast<unsigned>(sPairSuccessPending ? 1u : 0u));
+                     static_cast<unsigned>(sPairSuccessPending ? 1u : 0u),
+                     static_cast<unsigned>(sPairSuccessTriggered ? 1u : 0u));
         StopCommissioningWindow();
         osTimerStop(sBootDefaultTimer);
 
@@ -2476,6 +2496,16 @@ void AppTask::OnPlatformEvent(const chip::DeviceLayer::ChipDeviceEvent * event, 
                          static_cast<unsigned>(sCommissioningCompleteCount));
             return;
         }
+
+        // Apple/IKEA may post a 2nd complete; Google/Amazon usually only one.
+        // Only arm the success effect once per commissioning window.
+        if (sPairSuccessTriggered)
+        {
+            ChipLogError(Zcl, "[BLINK2] PAIR skipped reason=already-triggered count=%u",
+                         static_cast<unsigned>(sCommissioningCompleteCount));
+            return;
+        }
+        sPairSuccessTriggered = true;
 
         chip::DeviceLayer::PlatformMgr().ScheduleWork(
             [](intptr_t) { SyncAndReportLightStateToApp("commissioning-complete"); }, 0);
@@ -2516,6 +2546,7 @@ void AppTask::StartCommissioningWindow()
 
     sCommissioningActive = true;
     sCommissioningCompleteCount = 0u;
+    sPairSuccessTriggered = false;
     osTimerStart(sPostResetWindowTimer, pdMS_TO_TICKS(APP_COMMISSIONING_WINDOW_MS));
 #if defined(SL_CATALOG_ZIGBEE_STACK_COMMON_PRESENT)
     Zigbee::RequestStart();
@@ -2558,6 +2589,7 @@ void AppTask::RestartCommissioningTimer()
 
     sCommissioningActive = true;
     sCommissioningCompleteCount = 0u;
+    sPairSuccessTriggered = false;
     osTimerStart(sPostResetWindowTimer, pdMS_TO_TICKS(APP_COMMISSIONING_WINDOW_MS));
 #if defined(SL_CATALOG_ZIGBEE_STACK_COMMON_PRESENT)
     // 配网窗口重置：续期 Zigbee permit-join（CMP 模式下 Zigbee 始终在线）

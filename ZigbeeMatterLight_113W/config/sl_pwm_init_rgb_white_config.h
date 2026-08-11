@@ -41,7 +41,7 @@ extern "C" {
 
 // <o SL_PWM_RGB_WHITE_FREQUENCY> PWM frequency [Hz]
 // <i> Default: 10000
-#define SL_PWM_RGB_WHITE_FREQUENCY       15000
+#define SL_PWM_RGB_WHITE_FREQUENCY       20000
 
 // <o SL_PWM_RGB_WHITE_POLARITY> Polarity
 // <PWM_ACTIVE_HIGH=> Active high

@@ -73,6 +73,8 @@ public:
 
 public:
     static void StartIdentify(uint16_t identifyTimeSec, const char * source = "unknown");
+    /** 开灯后下一次长按从调暗开始（与开灯前最后一次调光方向无关）。 */
+    static void ResetDimmingDirectionAfterTurnOn();
 
     static AppTask & GetAppTask() { return sAppTask; }
 

@@ -100,9 +100,9 @@ static uint16_t g_attrFadeB = 0;
 static uint16_t g_attrFadeWPermille = 0;
 static bool g_powMemSavePending = false;
 static constexpr uint32_t kPowMemSaveDebounceMs = 1000u;
-static constexpr uint32_t kRgbwFadeStepMs = 20;
-static constexpr uint16_t kFadeStepsMin = 6;   // 120ms
-static constexpr uint16_t kFadeStepsMax = 50;  // 1000ms
+static constexpr uint32_t kRgbwFadeStepMs = 10; // 100Hz — smoother W at high brightness during on/off fades
+static constexpr uint16_t kFadeStepsMin = 6;   // >=60ms @ 10ms/step
+static constexpr uint16_t kFadeStepsMax = 80;  // <=800ms @ 10ms/step (on/off 400ms → 40 steps)
 static constexpr uint32_t kFadeRetargetMinMs = 80;
 static constexpr uint8_t kFadeRetargetMinDeltaRgb = 2;
 static constexpr uint32_t kAttrFadeCoalesceMs = 40u;
@@ -131,8 +131,8 @@ static uint8_t Rgb16To8(uint16_t v16)
     return static_cast<uint8_t>((static_cast<uint32_t>(v16) * 255u + 32767u) / 65535u);
 }
 
-// 白光 PWM：硬件 timer compare 分辨率 ≈ top+1 档（15kHz 下 top≈1333，约 1334 级）。
-// App/Matter 仍用 0~1000‰ 逻辑亮度；输出经 SL9003 线性区映射为 33.3%~93.9% 占空比。
+// 白光 PWM：硬件 timer compare 分辨率 ≈ top+1 档（20kHz 下 top 更低，档位数少于 15kHz）。
+// App/Matter 仍用 0~1000‰ 逻辑亮度；输出经 SL9003 线性区映射为 MIN%~MAX% 占空比（见 AppConfig）。
 static constexpr uint16_t kWhitePermilleMax = 1000u;
 
 static uint16_t WhitePercentToPermille(uint8_t pct)
@@ -504,12 +504,32 @@ extern "C" void MatterApplyWhiteBreathPermille(uint16_t permille)
         permille = kWhitePermilleMax;
     }
 
-    ApplyWhitePwmCompare(WhitePermilleToCompare(permille));
-    g_lastAppliedWPermille = permille;
-    g_lastAppliedR         = 0u;
-    g_lastAppliedG         = 0u;
-    g_lastAppliedB         = 0u;
-    g_hasLastApplied       = true;
+    // White-only: clear RGB so residual SM15135E output cannot shimmer at high W.
+    ApplyRgbwOutput(0u, 0u, 0u, WhitePermilleToCompare(permille));
+}
+
+extern "C" void MatterApplyWhiteBreathPermilleF(float permille)
+{
+    if (permille <= 0.0f)
+    {
+        ApplyRgbwOutput(0u, 0u, 0u, 0u);
+        return;
+    }
+    if (permille > 1000.0f)
+    {
+        permille = 1000.0f;
+    }
+
+    const uint32_t top      = GetWhitePwmTop();
+    const uint32_t dutySpan = APP_WHITE_PWM_DUTY_MAX_PERMILLE - APP_WHITE_PWM_DUTY_MIN_PERMILLE;
+    const float dutyF =
+        static_cast<float>(APP_WHITE_PWM_DUTY_MIN_PERMILLE) + (permille / 1000.0f) * static_cast<float>(dutySpan);
+    uint32_t duty = static_cast<uint32_t>(dutyF + 0.5f);
+    if (duty > 1000u)
+    {
+        duty = 1000u;
+    }
+    ApplyRgbwOutput(0u, 0u, 0u, (top * duty + 500u) / 1000u);
 }
 
 static uint16_t ComputeFadeSteps(uint32_t durationMs)
@@ -850,12 +870,37 @@ static uint8_t LevelQ16To255(int32_t levelQ16)
     return static_cast<uint8_t>(((static_cast<int64_t>(levelQ16) * 255) + (254 << 15)) / (254 << 16));
 }
 
+// Map (W mix ‰ × Q16 level) straight to PWM compare — avoids truncating to Matter level254
+// then to integer permille, which stairs visibly at high brightness during long-press dimming.
+static uint32_t WhiteMixLevelQ16ToCompare(uint16_t wMixPermille, int32_t levelQ16)
+{
+    if (wMixPermille == 0u || levelQ16 <= 0)
+    {
+        return 0u;
+    }
+
+    const int64_t levelQ16Max = static_cast<int64_t>(254) << 16;
+    if (levelQ16 > levelQ16Max)
+    {
+        levelQ16 = static_cast<int32_t>(levelQ16Max);
+    }
+
+    const uint32_t top      = GetWhitePwmTop();
+    const uint32_t dutySpan = APP_WHITE_PWM_DUTY_MAX_PERMILLE - APP_WHITE_PWM_DUTY_MIN_PERMILLE;
+    const int64_t dutyPermille =
+        static_cast<int64_t>(APP_WHITE_PWM_DUTY_MIN_PERMILLE) +
+        ((static_cast<int64_t>(wMixPermille) * static_cast<int64_t>(levelQ16) * static_cast<int64_t>(dutySpan)) +
+         (1000LL * levelQ16Max / 2)) /
+            (1000LL * levelQ16Max);
+    const uint32_t duty =
+        static_cast<uint32_t>(dutyPermille <= 0 ? 0 : (dutyPermille > 1000 ? 1000 : dutyPermille));
+    return (top * duty + 500u) / 1000u;
+}
+
 static void ApplyOutputFromLevelQ16(int32_t levelQ16)
 {
-    // Long-press dimming drives the hardware directly at full 16-bit precision (no 8-bit
-    // stair-steps). It must run at a high refresh rate: at ~33fps (30ms ticks) the per-frame
-    // refresh is visible as flicker; the dimming tick period is therefore kept at 20ms (50fps)
-    // in AppConfig.h, matching the color fade timer which is already flicker-free.
+    // Long-press dimming: keep W on Q16→compare (full timer resolution). RGB may still use
+    // level254 for mix/attenuation tables; W stair-steps were the visible high-brightness flicker.
     CancelRgbwFade();
 
     if (g_buttonPresetActive)
@@ -864,13 +909,11 @@ static void ApplyOutputFromLevelQ16(int32_t levelQ16)
         uint16_t r = 0;
         uint16_t g = 0;
         uint16_t b = 0;
-        uint16_t wPermille = 0;
-        ComputePresetRgbw(level254, r, g, b, wPermille);
-
-        ApplyRgbwNowPermille(static_cast<uint16_t>(r > 255u ? 255u : r),
-                             static_cast<uint16_t>(g > 255u ? 255u : g),
-                             static_cast<uint16_t>(b > 255u ? 255u : b),
-                             static_cast<uint16_t>(wPermille > kWhitePermilleMax ? kWhitePermilleMax : wPermille));
+        uint16_t wIgnored = 0;
+        ComputePresetRgbw(level254, r, g, b, wIgnored);
+        ApplyRgbwOutput(static_cast<uint16_t>(r > 255u ? 255u : r), static_cast<uint16_t>(g > 255u ? 255u : g),
+                        static_cast<uint16_t>(b > 255u ? 255u : b),
+                        WhiteMixLevelQ16ToCompare(g_buttonPresetWPermille, levelQ16));
         return;
     }
 
@@ -880,10 +923,16 @@ static void ApplyOutputFromLevelQ16(int32_t levelQ16)
         uint8_t rOut = 0;
         uint8_t gOut = 0;
         uint8_t bOut = 0;
-        uint16_t wPermille = 0;
+        uint16_t wIgnored = 0;
+        uint16_t wMix = 0;
+        uint8_t ignoreR = 0;
+        uint8_t ignoreG = 0;
+        uint8_t ignoreB = 0;
         const uint8_t level254 = static_cast<uint8_t>(levelQ16 >> 16);
-        ComputeCtRgbw(mireds, level254, rOut, gOut, bOut, wPermille);
-        ApplyRgbwNowPermille(rOut, gOut, bOut, wPermille);
+        // Full-level CT mix yields W base ‰ (attenuation does not touch W).
+        ComputeCtRgbw(mireds, APP_LEVEL_MAX, ignoreR, ignoreG, ignoreB, wMix);
+        ComputeCtRgbw(mireds, level254, rOut, gOut, bOut, wIgnored);
+        ApplyRgbwOutput(rOut, gOut, bOut, WhiteMixLevelQ16ToCompare(wMix, levelQ16));
         return;
     }
 
@@ -2736,6 +2785,12 @@ void MatterPostAttributeChangeCallback(const chip::app::ConcreteAttributePath & 
             g_rgbTargetR = g_lastNonZeroTargetR;
             g_rgbTargetG = g_lastNonZeroTargetG;
             g_rgbTargetB = g_lastNonZeroTargetB;
+        }
+
+        if (isOn)
+        {
+            // App/Zigbee/按键开灯：该次点亮后第一次长按均为调暗。
+            AppTask::ResetDimmingDirectionAfterTurnOn();
         }
 
         if (!isOn)

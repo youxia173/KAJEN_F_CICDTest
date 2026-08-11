@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>宜家 CI/CD 落地清单 · KAJEN_F / SixG301</title>
+  <style>
+    :root {
+      --bg: #f3efe6;
+      --ink: #1c1a16;
+      --muted: #5c574e;
+      --card: #fffdf8;
+      --line: #d9d2c3;
+      --ai: #1f6b5a;
+      --ai-soft: #e4f3ee;
+      --you: #8a4b12;
+      --you-soft: #f8ebe0;
+      --accent: #2a4b7c;
+      --ok: #2f7d4a;
+      --warn: #a15c12;
+      --shadow: 0 10px 30px rgba(28, 26, 22, 0.06);
+      --radius: 14px;
+      --font: "IBM Plex Sans", "Noto Sans SC", "Segoe UI", sans-serif;
+      --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: var(--font);
+      background:
+        radial-gradient(1200px 600px at 10% -10%, #fff8e8 0%, transparent 55%),
+        radial-gradient(900px 500px at 100% 0%, #e8f0ea 0%, transparent 50%),
+        var(--bg);
+      line-height: 1.55;
+    }
+
+    .wrap {
+      width: min(980px, calc(100% - 2rem));
+      margin: 0 auto;
+      padding: 2.5rem 0 4rem;
+    }
+
+    header.hero {
+      margin-bottom: 1.75rem;
+    }
+    header.hero h1 {
+      margin: 0 0 0.4rem;
+      font-size: clamp(1.6rem, 3vw, 2.2rem);
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+    }
+    header.hero p {
+      margin: 0;
+      color: var(--muted);
+      max-width: 46rem;
+    }
+
+    .intro {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: calc(var(--radius) + 4px);
+      box-shadow: var(--shadow);
+      padding: 1.2rem 1.25rem 1.3rem;
+      margin: 0 0 1.5rem;
+    }
+    .intro > h2 {
+      margin: 0 0 0.55rem;
+      font-size: 1.28rem;
+    }
+    .intro h3 {
+      margin: 1.15rem 0 0.4rem;
+      font-size: 1.05rem;
+      color: var(--accent);
+    }
+    .intro p, .intro li {
+      color: var(--ink);
+      font-size: 0.98rem;
+    }
+    .intro p { margin: 0.35rem 0; max-width: 46rem; }
+    .intro ul, .intro ol { margin: 0.35rem 0 0.2rem; padding-left: 1.25rem; }
+    .intro li { margin: 0.25rem 0; }
+    .intro .lead {
+      font-size: 1.05rem;
+      color: var(--ink);
+      max-width: 46rem;
+    }
+    .intro .one-liner {
+      margin-top: 0.9rem;
+      padding: 0.7rem 0.85rem;
+      border-left: 3px solid var(--accent);
+      background: #eef3f9;
+      color: #1e3355;
+      font-size: 0.96rem;
+      border-radius: 0 8px 8px 0;
+    }
+    .intro table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.55rem 0 0.2rem;
+      font-size: 0.94rem;
+    }
+    .intro th, .intro td {
+      border: 1px solid var(--line);
+      padding: 0.55rem 0.7rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    .intro th {
+      background: #f7f3ea;
+      font-weight: 600;
+    }
+    .intro .four-steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 0.65rem;
+      margin: 0.6rem 0 0.2rem;
+    }
+    .intro .four-steps > div {
+      background: #f7f3ea;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0.7rem 0.8rem;
+    }
+    .intro .four-steps strong {
+      display: block;
+      margin-bottom: 0.25rem;
+      font-size: 0.92rem;
+    }
+    .intro .four-steps span {
+      color: var(--muted);
+      font-size: 0.88rem;
+      line-height: 1.4;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      align-items: center;
+      margin: 1.25rem 0 1.5rem;
+    }
+    .btn {
+      border: 1px solid var(--line);
+      background: var(--card);
+      color: var(--ink);
+      border-radius: 999px;
+      padding: 0.45rem 0.9rem;
+      font: inherit;
+      cursor: pointer;
+      box-shadow: var(--shadow);
+    }
+    .btn:hover { border-color: #b9b0a0; }
+    .btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .progress {
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .toc {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+    }
+    .toc a {
+      text-decoration: none;
+      color: inherit;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 0.9rem 1rem;
+      box-shadow: var(--shadow);
+    }
+    .toc a strong { display: block; margin-bottom: 0.2rem; }
+    .toc a span { color: var(--muted); font-size: 0.92rem; }
+
+    section.block {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: calc(var(--radius) + 4px);
+      box-shadow: var(--shadow);
+      padding: 1.15rem 1.15rem 0.4rem;
+      margin-bottom: 1.25rem;
+    }
+    section.block > h2 {
+      margin: 0 0 0.35rem;
+      font-size: 1.25rem;
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 0.15rem 0.55rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .badge.ai { background: var(--ai-soft); color: var(--ai); }
+    .badge.you { background: var(--you-soft); color: var(--you); }
+    .badge.done { background: #e6f5ea; color: var(--ok); }
+    .badge.todo { background: #fff1df; color: var(--warn); }
+    .section-intro {
+      color: var(--muted);
+      margin: 0 0 0.9rem;
+      font-size: 0.96rem;
+    }
+
+    details.item {
+      border-top: 1px solid var(--line);
+      padding: 0.85rem 0.15rem;
+    }
+    details.item:last-child { border-bottom: none; }
+    summary {
+      list-style: none;
+      cursor: pointer;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 0.7rem;
+      align-items: start;
+    }
+    summary::-webkit-details-marker { display: none; }
+    .check {
+      width: 1.15rem;
+      height: 1.15rem;
+      margin-top: 0.2rem;
+      accent-color: var(--accent);
+    }
+    .title-wrap { min-width: 0; }
+    .title-wrap .name {
+      font-weight: 650;
+      font-size: 1.02rem;
+    }
+    .title-wrap .meta {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-top: 0.15rem;
+    }
+    .chev {
+      color: var(--muted);
+      transition: transform 0.15s ease;
+      margin-top: 0.15rem;
+    }
+    details[open] .chev { transform: rotate(90deg); }
+
+    .body {
+      margin: 0.75rem 0 0.35rem 1.85rem;
+      padding: 0.85rem 1rem;
+      background: #faf7f0;
+      border: 1px solid #ebe4d7;
+      border-radius: 10px;
+    }
+    .body h4 {
+      margin: 0.7rem 0 0.35rem;
+      font-size: 0.92rem;
+      color: var(--accent);
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    .body h4:first-child { margin-top: 0; }
+    .body ol, .body ul {
+      margin: 0.2rem 0 0.45rem;
+      padding-left: 1.2rem;
+    }
+    .body li { margin: 0.25rem 0; }
+    .body code, .cmd {
+      font-family: var(--mono);
+      font-size: 0.86em;
+      background: #efe9dc;
+      border-radius: 5px;
+      padding: 0.08rem 0.35rem;
+    }
+    .cmd-block {
+      display: block;
+      white-space: pre-wrap;
+      font-family: var(--mono);
+      font-size: 0.84rem;
+      background: #1c1a16;
+      color: #f4efe4;
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      margin: 0.45rem 0 0.2rem;
+      overflow-x: auto;
+    }
+    .note {
+      margin-top: 0.55rem;
+      padding: 0.55rem 0.7rem;
+      border-left: 3px solid var(--warn);
+      background: #fff8ef;
+      color: #6b4a1d;
+      font-size: 0.92rem;
+    }
+
+    .next {
+      background: linear-gradient(180deg, #ffffff 0%, #f7f3ea 100%);
+      border: 1px solid var(--line);
+      border-radius: calc(var(--radius) + 4px);
+      padding: 1.1rem 1.2rem 1.2rem;
+      box-shadow: var(--shadow);
+    }
+    .next h2 { margin: 0 0 0.55rem; font-size: 1.2rem; }
+    .next ol { margin: 0; padding-left: 1.2rem; }
+    .next li { margin: 0.45rem 0; }
+
+    footer {
+      margin-top: 1.5rem;
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+
+    @media (max-width: 640px) {
+      .progress { margin-left: 0; width: 100%; }
+      .body { margin-left: 0; }
+      summary { grid-template-columns: auto 1fr; }
+      .chev { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <h1>宜家 CI/CD 落地清单</h1>
+      <p>
+        针对仓库 <code>KAJEN_F</code>（SixG301 / ZigbeeMatterLightSolution）对照 Inter IKEA Homesmart DevOps 要求。
+        每项展开可看「要做什么」和「怎么做」。勾选状态会保存在本机浏览器。
+      </p>
+    </header>
+
+    <section class="intro" id="what-is-cicd" aria-labelledby="intro-title">
+      <h2 id="intro-title">先读：CI/CD 到底是什么？（大白话）</h2>
+      <p class="lead">把它想成<strong>工厂流水线</strong>，不是一种芯片技术，也不是再发明一种灯光协议。</p>
+      <p>
+        你们现在写灯的固件，大概是：改代码 → 自己电脑编译 → 烧录板子测试 → 觉得 OK 了，把文件发给宜家。
+        <strong>CI/CD</strong> 就是把「检查、编译、打包、交给宜家」尽量变成<strong>自动的</strong>，少靠人工记得去做。
+      </p>
+
+      <h3>CI（持续集成）—— 自动质检</h3>
+      <p>代码一推到 GitHub（或提合并请求），电脑自动帮你做检查，例如：</p>
+      <ul>
+        <li>代码风格乱不乱</li>
+        <li>有没有明显低级错误</li>
+        <li>（以后）能不能编译出固件</li>
+      </ul>
+      <p>就像：东西进仓库前，先过一道<strong>自动安检</strong>。安检不过，就提醒你改；过了，才继续往下。</p>
+      <p>你们项目里已经接上的，主要是这道安检（lint / cppcheck）。</p>
+
+      <h3>CD（持续交付/部署）—— 自动出货</h3>
+      <p>检查通过后，再自动：</p>
+      <ul>
+        <li>打一个版本号（比如 <code>v0.3.3</code>）</li>
+        <li>打包固件</li>
+        <li>（宜家要求）上传到他们的升级服务器（OTA）</li>
+      </ul>
+      <p>就像：质检合格后，<strong>自动装箱贴标签发货</strong>，不用每次纯手工拷文件。</p>
+      <p>这一块还没完全接通，因为需要宜家的上传接口和账号。</p>
+
+      <h3>和宜家有什么关系？</h3>
+      <p>宜家不是要你改灯的开关逻辑，而是要求：</p>
+      <p><em>供应商的固件开发，要走正规的「自动检查 + 可追溯发版」流程，代码放在 GitHub 上。</em></p>
+      <p>所以「按宜家规范做 CI/CD」≈：</p>
+      <p><strong>别只靠工程师本机；要让 GitHub 也能自动检查，发版要有版本号和记录，最后能交到宜家系统。</strong></p>
+
+      <h3>你真正需要关心的，其实就 4 件事</h3>
+      <p>清单很长，是因为合规细节多。对你个人，先记住这 4 步就够：</p>
+      <div class="four-steps">
+        <div><strong>1. 代码放 GitHub</strong><span>仓库你们已经有了</span></div>
+        <div><strong>2. 推上去看 Actions</strong><span>每次改完，看自动检查绿没绿</span></div>
+        <div><strong>3. 发版打 Tag</strong><span>例如 <code>v0.3.3</code>，留下版本记录</span></div>
+        <div><strong>4. 以后自动上传</strong><span>宜家给接口后，再接到他们的 OTA</span></div>
+      </div>
+      <p style="margin-top:0.75rem;color:var(--muted);font-size:0.92rem;">
+        其他像 Secrets、Variables、self-hosted runner、Docker……都是为了让第 2、4 步在云端也能跑，属于「环境配套」，不是灯功能本身。
+      </p>
+
+      <h3>用你们灯项目举个例子</h3>
+      <table>
+        <thead>
+          <tr><th>以前</th><th>有了 CI/CD 之后</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>你改完，自己记得跑检查</td><td>一 push，GitHub 自动跑检查</td></tr>
+          <tr><td>编译只在你电脑</td><td>理想状态：服务器也能编出同样固件</td></tr>
+          <tr><td>发宜家靠微信/网盘传 <code>.s37</code></td><td>理想状态：打 Tag 后自动打包，甚至自动传到宜家 OTA</td></tr>
+          <tr><td>「这是哪一版？」靠记忆</td><td>每个版本有 Tag + Release 说明</td></tr>
+        </tbody>
+      </table>
+
+      <div class="one-liner">
+        <strong>一句话：</strong>CI/CD = 自动质检 + 自动发版流水线。
+        你现在最该懂的只有：<strong>推代码 → 自动检查；发版打标签 → 留档（以后再自动交给宜家）。</strong>
+        下面清单是把这件事拆成可勾选的步骤。
+      </div>
+    </section>
+
+    <div class="toolbar">
+      <button class="btn primary" type="button" id="expandAll">全部展开</button>
+      <button class="btn" type="button" id="collapseAll">全部折叠</button>
+      <button class="btn" type="button" id="resetChecks">清空勾选</button>
+      <div class="progress" id="progress">进度：0 / 0</div>
+    </div>
+
+    <nav class="toc" aria-label="目录">
+      <a href="#what-is-cicd"><strong>〇、先读介绍</strong><span>CI/CD 是什么（大白话）</span></a>
+      <a href="#ai-done"><strong>一、AI 已完成</strong><span>已落地的仓库改动</span></a>
+      <a href="#ai-can"><strong>二、AI 还能直接做</strong><span>你点头即可继续的工作</span></a>
+      <a href="#you-must"><strong>三、需要你做</strong><span>权限 / 账号 / 环境 / 宜家对接</span></a>
+      <a href="#next3"><strong>四、建议下一步</strong><span>优先做这 3 件</span></a>
+    </nav>
+
+    <!-- ========== AI DONE ========== -->
+    <section class="block" id="ai-done">
+      <h2><span class="badge ai">AI</span><span class="badge done">已完成</span> 已经做好的</h2>
+      <p class="section-intro">这些已在本地工程里改好；推到 GitHub 后才会在 Actions 里真正跑起来。</p>
+
+      <details class="item" open>
+        <summary>
+          <input class="check" type="checkbox" data-id="ai-done-1" />
+          <div class="title-wrap">
+            <div class="name">CI 工作流：`.github/workflows/ci.yml`</div>
+            <div class="meta">PR / push 触发 cpplint + cppcheck</div>
+          </div>
+          <span class="chev">›</span>
+        </summary>
+        <div class="body">
+          <h4>要做什么</h4>
+          <ul>
+            <li>确认文件存在，并在 push 后到 GitHub → Actions 看是否变绿。</li>
+          </ul>
+          <h4>怎么做</h4>
+          <ol>
+            <li>本地打开：<code>.github/workflows/ci.yml</code></li>
+            <li>提交并推送后打开：GitHub 仓库 → <strong>Actions</strong> → <strong>CI</strong></li>
+            <li>点开最新 run，看 <code>cpplint</code> / <code>cppcheck</code> 两个 job</li>
+          </ol>
+          <div class="note">默认 lint 不因风格问题卡死流水线；若要严格失败，设仓库变量 <code>CI_STRICT_LINT=true</code>。</div>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <input class="check" type="checkbox" data-id="ai-done-2" />
+          <div class="title-wrap">
+            <div class="name">Release 工作流：`.github/workflows/release.yml`</div>
+            <div class="meta">打 Tag <code>v*</code> 时打包 Release；OTA 为占位</div>
+          </div>
+          <span class="chev">›</span>
+        </summary>
+        <div class="body">
+          <h4>要做什么</h4>
+          <ul>
+            <li>发版时用版本 Tag，检查 GitHub Releases 是否生成产物说明。</li>
+          </ul>
+          <h4>怎么做</h4>
+          <ol>
+            <li>确认固件产物在 <code>artifact/</code>（或先本地编译）</li>
+            <li>打 Tag 并推送：</li>
+          </ol>
+          <pre class="cmd-block">git tag v0.3.3
+git push origin v0.3.3</pre>
+          <ol start="3">
+            <li>到 GitHub → <strong>Releases</strong> 查看自动创建的发布页</li>
+          </ol>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <input class="check" type="checkbox" data-id="ai-done-3" />
+          <div class="title-wrap">
+            <div class="name">本地同构入口：`scripts/ci_local.sh`</div>
+            <div class="meta">宜家要求：本地能用与 CI 相同方式构建/检查</div>
+          </div>
+          <span class="chev">›</span>
+        </summary>
+        <div class="body">
+          <h4>要做什么</h4>
+          <ul>
+            <li>每次提 PR 前先本地跑一遍，减少 Actions 红灯。</li>
+          </ul>
+          <h4>怎么做</h4>
+          <pre class="cmd-block">cd /home/hans/SimplicityStudio/v6_workspace/ZigbeeMatterLightSolution_SixG301M113W
+bash scripts/ci_local.sh                 # lint + cppcheck
+bash scripts/ci_local.sh --strict        # lint 有问题也失败
+bash scripts/ci_local.sh --with-build    # 额外固件编译（需本机 SDK）</pre>
+          <p>报告目录：<code>code_quality_report/</code></p>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <input class="check" type="checkbox" data-id="ai-done-4" />
+          <div class="title-wrap">
+            <div class="name">文档与模板：`docs/CI_CD.md`、PR 模板、lint 范围</div>
+            <div class="meta">说明 Variables/Secrets；lint 只扫 src/include</div>
+          </div>
+          <span class="chev">›</span>
+        </summary>
+        <div class="body">
+          <h4>要做什么</h4>
+          <ul>
+            <li>把 <code>docs/CI_CD.md</code> 当团队操作说明；开 PR 时按模板填测试项。</li>
+          </ul>
+          <h4>怎么做</h4>
+          <ol>
+            <li>阅读：<code>docs/CI_CD.md</code></li>
+            <li>PR 模板路径：<code>.github/PULL_REQUEST_TEMPLATE.md</code>（开 PR 时自动带出）</li>
+          </ol>
+        </div>
+      </details>
+    </section>
+
+    <!-- ========== AI CAN ========== -->
+    <section class="block" id="ai-can">
+      <h2><span class="badge ai">AI</span><span class="badge todo">待你确认</span> 我还能直接帮你做的</h2>
+      <p class="section-intro">这些不需要宜家账号；你说一声「做」或提供少量信息，我就可以在仓库里改。</p>
+
+      <details class="item" open>
+        <summary>
+          <input class="check" type="checkbox" data-id="ai-can-1" />
+          <div class="title-wrap">
+            <div class="name">创建 Git Commit（不自动 push）</div>
+            <div class="meta">把已改的 CI 文件提交到本地 git</div>
+          </div>
+          <span class="chev">›</span>
+        </summary>
+        <div class="body">
+          <h4>要做什么</h4>
+          <ul>
+            <li>你回复：「帮我 commit」；我按仓库风格写提交说明并提交。</li>
+          </ul>
+          <h4>怎么做（你侧）</h4>
+          <ol>
+            <li>确认暂存内容无误（不要提交密钥）</li>
+            <li>对我说：<strong>帮我 commit</strong></li>
+            <li>之后你自己或授权我再 <code>git push</code></li>
+          </ol>
+          <div class="note">默认我不 push；需要 push 时请明确说「帮我 push」。</div>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <input class="check" type="checkbox" data-id="ai-can-2" />
+          <div class="title-wrap">
+            <div class="name">收紧 / 配置 cpplint（CPPLINT.cfg、过滤噪声）</div>
+            <div class="meta">减少上千条风格噪音，保留关键规则</div>
+          </div>
+          <span class="chev">›</span>
+        </summary>
+        <div class="body">
+          <h4>要做什么</h4>
+          <ul>
+            <li>你定标准：版权头要不要、行宽 80 还是 120、brace 风格等。</li>
+            <li>我加 <code>CPPLINT.cfg</code> 或 filters，并视需要改少量源码。</li>
+          </ul>
+          <h4>怎么做</h4>
+          <ol>
+            <li>先跑：<code>bash scripts/linter/linter.sh -p</code>，看报告</li>
+            <li>告诉我：要「先忽略版权/行宽」还是「逐步修到 0」</li>
+            <li>我改配置或代码后，你再跑 <code>bash scripts/ci_local.sh --strict</code> 验收</li>
+          </ol>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <input class="check" type="checkbox" data-id="ai-can-3" />
+          <div class="title-wrap">
+            <div class="name">加 format job / 完善 CI 阶段</div>
+            <div class="meta">接入已有 <code>scripts/format/format.sh</code></div>
+          </div>
+          <span class="chev">›</span>
+        </summary>
+        <div class="body">
+          <h4>要做什么</h4>
+          <ul>
+            <li>在 <code>ci.yml</code> 增加 format 检查；必要时加 clang-format 配置。</li>
+          </ul>
+          <h4>怎么做</h4>
+          <ol>
+            <li>对我说：<strong>把 format 也加进 CI</strong></li>
+            <li>我改 workflow + 如需补 <code>.clang-format</code></li>
+            <li>你本地：<code>bash scripts/format/format.sh</code> 验证</li>
+          </ol>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <input class="check" type="checkbox" data-id="ai-can-4" />
+          <div class="title-wrap">
+            <div class="name">固件云构建骨架（Docker / self-hosted 脚本草稿）</div>
+            <div class="meta">逻辑可写好；真正跑通依赖你的 SDK 环境</div>
+          </div>
+          <span class="chev">›</span>
+        </summary>
+        <div class="body">
+          <h4>要做什么</h4>
+          <ul>
+            <li>我写 Dockerfile / Action 调用方式 / runner 安装说明草稿。</li>
+            <li>你提供：SDK 安装路径、许可证约束、能否放进镜像。</li>
+          </ul>
+          <h4>怎么做</h4>
+          <ol>
+            <li>准备一台 Linux 机器或确认能否把 SiSDK 拷进私有镜像</li>
+            <li>把路径与工具版本告诉我（例如 commander、ARM GCC、cmake preset）</li>
+            <li>我生成：<code>docker/</code> 或 <code>scripts/ci_build_firmware.sh</code> + workflow job</li>
+            <li>你在 GitHub 设变量 <code>ENABLE_FIRMWARE_BUILD=true</code> 并挂 runner</li>
+          </ol>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <input class="check" type="checkbox" data-id="ai-can-5" />
+          <div class="title-wrap">
+            <div class="name">Homesmart OTA 上传脚本（有官方 API 后）</div>
+            <div class="meta">替换 <code>release.yml</code> 里的 TODO 占位</div>
+          </div>
+          <span class="chev">›</span>
+        </summary>
+        <div class="body">
+          <h4>要做什么</h4>
+          <ul>
+            <li>你向宜家要 API 文档与测试凭证；我写 <code>scripts/ota/upload.sh</code> 并接到 Release。</li>
+          </ul>
+          <h4>怎么做</h4>
+          <ol>
+            <li>拿到：URL、鉴权方式、上传字段、产物格式要求</li>
+            <li>把文档或示例 curl 发给我</li>
+            <li>我实现脚本；你在 GitHub Secrets 填 <code>IKEA_OTA_API_URL</code> / <code>IKEA_OTA_TOKEN</code></li>
+            <li>设变量 <code>ENABLE_OTA_UPLOAD=true</code> 后用测试 Tag 验证</li>
+          </ol>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <input class="check" type="checkbox" data-id="ai-can-6" />
+          <div class="title-wrap">
+            <div class="name">单元测试脚手架 / 用例</div>
+            <div class="meta">现有 <code>scripts/unittest</code> 依赖缺失的 kt_components</div>
+          </div>
+          <span class="chev">›</span>
+        </summary>
+        <div class="body">
+          <h4>要做什么</h4>
+          <ul>
+            <li>你定优先测什么（例如 CT 混色表、XY 换算、亮度映射）。</li>
+            <li>我加可在 Ubuntu CI 跑的 host 测试（cmocka/gtest 其一）。</li>
+          </ul>
+          <h4>怎么做</h4>
+          <ol>
+            <li>列出 3～5 个纯函数级测试点（不依赖硬件）</li>
+            <li>对我说：<strong>按这些点加单元测试</strong></li>
+            <li>合并后确认 CI 的 unittest job 自动启用（目录存在即跑）</li>
+          </ol>
+        </div>
+      </details>
+    </section>
+
+    <!-- ========== YOU MUST ========== -->
+    <section class="block" id="you-must">
+      <h2><span class="badge you">你</span><span class="badge todo">必做</span> 需要你亲自完成的</h2>
+      <p class="section-intro">这些涉及账号、权限、硬件环境或宜家侧交付物，我无法代替你完成。</p>
+
+      <details class="item" open>
+        <summary>
+          <input class="check" type="checkbox" data-id="you-1" />
+          <div class="title-wrap">
+            <div class="name">把改动 Push 到 GitHub</div>
+            <div class="meta">远程：<code>origin = https://github.com/barryjim/KAJEN_F.git</code></div>
+          </div>
+          <span class="chev">›</span>
+        </summary>
+        <div class="body">
+          <h4>要做什么</h4>
+          <ul>
+            <li>让 CI 文件出现在远程 <code>main</code>（或你的开发分支），Actions 才能跑。</li>
+          </ul>
+          <h4>怎么做</h4>
+          <pre class="cmd-block">cd /home/hans/SimplicityStudio/v6_workspace/ZigbeeMatterLightSolution_SixG301M113W
+git status
+git push -u origin HEAD</pre>
+          <ol>
+            <li>若未 commit，先让我帮你 commit，或自己提交</li>
+            <li>确认 GitHub 上能看到 <code>.github/workflows/ci.yml</code></li>
+            <li>打开 Actions，确认首次 CI 已触发</li>
+          </ol>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <input class="check" type="checkbox" data-id="you-2" />
+          <div class="title-wrap">
+            <div class="name">开启 / 检查 GitHub Actions 权限</div>
+            <div class="meta">私有仓或组织策略可能默认关掉 Actions</div>
+          </div>
+          <span class="chev">›</span>
+        </summary>
+        <div class="body">
+          <h4>要做什么</h4>
+          <ul>
+            <li>确保仓库允许 GitHub Actions 读写并上传 Artifact。</li>
+          </ul>
+          <h4>怎么做</h4>
+          <ol>
+            <li>打开仓库 → <strong>Settings</strong> → <strong>Actions</strong> → <strong>General</strong></li>
+            <li><strong>Actions permissions</strong>：允许 Actions</li>
+            <li><strong>Workflow permissions</strong>：建议 Read and write（Release 需要写权限）</li>
+            <li>保存后重新跑一次 workflow</li>
+          </ol>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <input class="check" type="checkbox" data-id="you-3" />
+          <div class="title-wrap">
+            <div class="name">配置 GitHub Variables</div>
+            <div class="meta">控制固件构建 / 严格 lint / OTA 开关</div>
+          </div>
+          <span class="chev">›</span>
+        </summary>
+        <div class="body">
+          <h4>要做什么</h4>
+          <ul>
+            <li>按需添加仓库 Variables（不是 Secrets）。</li>
+          </ul>
+          <h4>怎么做</h4>
+          <ol>
+            <li>Settings → <strong>Secrets and variables</strong> → <strong>Actions</strong> → <strong>Variables</strong> 页</li>
+            <li>按需添加：</li>
+          </ol>
+          <ul>
+            <li><code>CI_STRICT_LINT</code> = <code>true</code> — lint 失败则 CI 红</li>
+            <li><code>ENABLE_FIRMWARE_BUILD</code> = <code>true</code> — 打开固件 job（需 runner）</li>
+            <li><code>SILABS_RUNNER</code> = 你的 self-hosted 标签，例如 <code>self-hosted</code></li>
+            <li><code>ENABLE_OTA_UPLOAD</code> = <code>true</code> — 打开 OTA job</li>
+          </ul>
+          <div class="note">现阶段可先不设任何变量：默认只跑 lint + cppcheck。</div>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <input class="check" type="checkbox" data-id="you-4" />
+          <div class="title-wrap">
+            <div class="name">配置 GitHub Secrets（OTA 等）</div>
+            <div class="meta">密钥绝不能进源码</div>
+          </div>
+          <span class="chev">›</span>
+        </summary>
+        <div class="body">
+          <h4>要做什么</h4>
+          <ul>
+            <li>把宜家 OTA 凭证放进 Secrets。</li>
+          </ul>
+          <h4>怎么做</h4>
+          <ol>
+            <li>Settings → Secrets and variables → Actions → <strong>Secrets</strong></li>
+            <li>新建：</li>
+          </ol>
+          <ul>
+            <li><code>IKEA_OTA_API_URL</code></li>
+            <li><code>IKEA_OTA_TOKEN</code></li>
+          </ul>
+          <ol start="3">
+            <li>再设 Variable <code>ENABLE_OTA_UPLOAD=true</code></li>
+            <li>用测试 Tag 验证 Release → ota-upload job</li>
+          </ol>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <input class="check" type="checkbox" data-id="you-5" />
+          <div class="title-wrap">
+            <div class="name">准备 Silicon Labs 云构建环境</div>
+            <div class="meta">ubuntu-latest 默认没有 SiSDK / Studio 工具链</div>
+          </div>
+          <span class="chev">›</span>
+        </summary>
+        <div class="body">
+          <h4>要做什么</h4>
+          <ul>
+            <li>提供一台装好 SDK 的 Linux runner，或可分发的 Docker 镜像（注意许可）。</li>
+          </ul>
+          <h4>怎么做（self-hosted 示例）</h4>
+          <ol>
+            <li>在 Linux 机安装：CMake、Ninja、ARM GCC、Simplicity Commander、工程所需 SiSDK/Matter 依赖</li>
+            <li>确认本机可跑通：</li>
+          </ol>
+          <pre class="cmd-block">bash scripts/ci_local.sh --with-build
+# 或
+cd ZigbeeMatterLightSolution_SixG301M113W_cmake && cmake --build --preset default_config</pre>
+          <ol start="3">
+            <li>按 GitHub 文档安装 self-hosted runner，打标签（如 <code>silabs-sdk</code>）</li>
+            <li>仓库 Variable：<code>ENABLE_FIRMWARE_BUILD=true</code>，<code>SILABS_RUNNER</code> 填对应 runs-on</li>
+          </ol>
+          <div class="note">宜家要求构建工具最终打成 Docker + 自定义 Action，并最好独立工具仓；可第二阶段做。</div>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <input class="check" type="checkbox" data-id="you-6" />
+          <div class="title-wrap">
+            <div class="name">向宜家索取 Homesmart OTA API 与镜像仓</div>
+            <div class="meta">CD 与 Inter IKEA GitHub 镜像都依赖对方开通</div>
+          </div>
+          <span class="chev">›</span>
+        </summary>
+        <div class="body">
+          <h4>要做什么</h4>
+          <ul>
+            <li>邮件/工单向宜家要：OTA API、测试账号、Inter IKEA GitHub 目标仓与权限。</li>
+          </ul>
+          <h4>怎么做（可复制给宜家的问题清单）</h4>
+          <ul>
+            <li>Homesmart OTA 上传 API 文档与沙箱环境？</li>
+            <li>鉴权方式（Token / mTLS）与轮换策略？</li>
+            <li>交付包命名、版本号、签名要求？</li>
+            <li>代码镜像的目标 org/repo、同步频率、是否只要 release 时同步？</li>
+            <li>是否必须使用他们提供的可复用 workflow / Action？</li>
+          </ul>
+          <p>拿到后把文档发给我，我补脚本与 workflow。</p>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <input class="check" type="checkbox" data-id="you-7" />
+          <div class="title-wrap">
+            <div class="name">镜像代码到 Inter IKEA GitHub</div>
+            <div class="meta">NonFuncReq：定期镜像；交付功能/固件时必须同步</div>
+          </div>
+          <span class="chev">›</span>
+        </summary>
+        <div class="body">
+          <h4>要做什么</h4>
+          <ul>
+            <li>配置第二个 remote 或组织同步；交付时 push 到宜家仓。</li>
+          </ul>
+          <h4>怎么做（示例）</h4>
+          <pre class="cmd-block">git remote add ikea git@github.com:INTER-IKEA-ORG/your-repo.git   # 地址以宜家为准
+git push ikea main
+git push ikea v0.3.3</pre>
+          <ol>
+            <li>向宜家申请写权限 / Deploy key / GitHub App</li>
+            <li>约定分支保护与谁有 merge 权</li>
+            <li>可选：加定时 mirror workflow（需 <code>IKEA_MIRROR_TOKEN</code> Secret）</li>
+          </ol>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <input class="check" type="checkbox" data-id="you-8" />
+          <div class="title-wrap">
+            <div class="name">定版本与 Tag 策略，并做真机验收</div>
+            <div class="meta">宜家要求用发布版本号打 Tag</div>
+          </div>
+          <span class="chev">›</span>
+        </summary>
+        <div class="body">
+          <h4>要做什么</h4>
+          <ul>
+            <li>统一版本号（与 <code>scripts/release/update_version.sh</code> / 软件版本字符串一致）。</li>
+            <li>发版前真机回归：开关、色温、XY、配网、OTA（如有）。</li>
+          </ul>
+          <h4>怎么做</h4>
+          <ol>
+            <li>改版本：可用已有 <code>scripts/release/update_version.sh</code>（按脚本说明）</li>
+            <li>本地编译烧录：<code>./flash.sh --build</code></li>
+            <li>测完再 <code>scripts/release/tag.sh</code> 或手动 <code>git tag vX.Y.Z</code></li>
+            <li>推送 Tag 触发 Release workflow</li>
+          </ol>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <input class="check" type="checkbox" data-id="you-9" />
+          <div class="title-wrap">
+            <div class="name">（可选）IaC 固化构建机</div>
+            <div class="meta">宜家要求自定义 runner 可用 Terraform/Ansible 复现</div>
+          </div>
+          <span class="chev">›</span>
+        </summary>
+        <div class="body">
+          <h4>要做什么</h4>
+          <ul>
+            <li>把 runner 装机步骤变成可版本管理的脚本/剧本。</li>
+          </ul>
+          <h4>怎么做</h4>
+          <ol>
+            <li>先手工装通一台 runner</li>
+            <li>把步骤记成 Ansible role 或 shell bootstrap</li>
+            <li>可让我根据你的装机笔记生成初稿，再由你们运维收进独立 infra 仓</li>
+          </ol>
+        </div>
+      </details>
+    </section>
+
+    <!-- ========== NEXT 3 ========== -->
+    <section class="next" id="next3">
+      <h2>建议你现在优先做的 3 件事</h2>
+      <ol>
+        <li>
+          <strong>让我 commit（或你自己提交）并 push 到 GitHub</strong><br />
+          没有这一步，Actions 不会跑。对我说「帮我 commit」，然后再 <code>git push</code>。
+        </li>
+        <li>
+          <strong>打开 GitHub Actions，确认 CI 工作流出现并跑完</strong><br />
+          路径：仓库 → Actions → CI。先保证 lint/cppcheck 流程可用。
+        </li>
+        <li>
+          <strong>同步问宜家要 OTA API + Inter IKEA 镜像仓权限</strong><br />
+          这两项是 CD 与合规镜像的卡点；拿到后我才能把占位改成真上传。
+        </li>
+      </ol>
+    </section>
+
+    <footer>
+      工程路径：<code>ZigbeeMatterLightSolution_SixG301M113W</code> ·
+      说明文档：<code>docs/CI_CD.md</code> ·
+      本清单可直接用浏览器打开；勾选保存在 localStorage 键 <code>ikea-cicd-checklist-v1</code>。
+    </footer>
+  </div>
+
+  <script>
+    const STORAGE_KEY = "ikea-cicd-checklist-v1";
+
+    function loadState() {
+      try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"); }
+      catch { return {}; }
+    }
+    function saveState(state) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
+    function updateProgress() {
+      const boxes = [...document.querySelectorAll("input.check")];
+      const done = boxes.filter((b) => b.checked).length;
+      document.getElementById("progress").textContent =
+        `进度：${done} / ${boxes.length} 已勾选`;
+    }
+
+    const state = loadState();
+    document.querySelectorAll("input.check").forEach((box) => {
+      const id = box.getAttribute("data-id");
+      if (state[id]) box.checked = true;
+      box.addEventListener("change", () => {
+        state[id] = box.checked;
+        saveState(state);
+        updateProgress();
+      });
+    });
+    updateProgress();
+
+    document.getElementById("expandAll").onclick = () => {
+      document.querySelectorAll("details.item").forEach((d) => { d.open = true; });
+    };
+    document.getElementById("collapseAll").onclick = () => {
+      document.querySelectorAll("details.item").forEach((d) => { d.open = false; });
+    };
+    document.getElementById("resetChecks").onclick = () => {
+      document.querySelectorAll("input.check").forEach((box) => {
+        box.checked = false;
+        state[box.getAttribute("data-id")] = false;
+      });
+      saveState(state);
+      updateProgress();
+    };
+  </script>
+</body>
+</html>

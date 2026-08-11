@@ -144,14 +144,16 @@
 #define APP_RESET_WARN_END_ON_MS 1200u
 #define APP_PAIR_SUCCESS_BLINK_ON_MS 200u
 #define APP_PAIR_SUCCESS_BLINK_OFF_MS 200u      
-// 部分控制器会连续发两次 CommissioningComplete；只在第 N 次时闪配网成功灯
-#define APP_PAIR_SUCCESS_COMPLETE_COUNT 2u
+// 第 N 次 CommissioningComplete 触发配网成功快闪。
+// 注意：Apple/IKEA 有时会连发 2 次，Google/Amazon 通常只发 1 次。
+// 必须用 1，否则谷歌/亚马逊会一直卡在开机白光呼吸且不闪成功灯。
+#define APP_PAIR_SUCCESS_COMPLETE_COUNT 1u
 #define APP_IDENTIFY_BLINK_MS 400u
 
 // SL9003 线性调光：1.1V~3.1V 控制脚，MCU PWM 满幅 3.3V
 // 占空比 1.1/3.3≈33.3%，3.1/3.3≈93.9%；逻辑亮度 0 仍为 PWM 关断(0%)
 #define APP_WHITE_PWM_SUPPLY_MV 3300u
-#define APP_SL9003_DIM_MIN_MV 200u  //最小0.2V 
-#define APP_SL9003_DIM_MAX_MV 3100u  //最大3.1V
+#define APP_SL9003_DIM_MIN_MV 200u  //最小0.2V
+#define APP_SL9003_DIM_MAX_MV 3100u  //最大3.1V ≈93.9%
 #define APP_WHITE_PWM_DUTY_MIN_PERMILLE ((APP_SL9003_DIM_MIN_MV * 1000u) / APP_WHITE_PWM_SUPPLY_MV)
 #define APP_WHITE_PWM_DUTY_MAX_PERMILLE ((APP_SL9003_DIM_MAX_MV * 1000u) / APP_WHITE_PWM_SUPPLY_MV)

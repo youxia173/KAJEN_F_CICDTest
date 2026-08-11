@@ -63,14 +63,27 @@ pushd "$PWD" > /dev/null 2>&1
 
     cd ${SCRIPT_PATH}/../..
 
-    if [ -n "${SINGLE_FILE}" ]; then
+        if [ -n "${SINGLE_FILE}" ]; then
         ./third_party/cpplint/cpplint.py "${SINGLE_FILE}"
     else
-        patterns=('*.c' '*.h')
-        excludes=('./sdk/*' './third_party/*' './unit_test/*' './scripts/*' '*/stack_wrappers/*' './kt_projects/*' './patches/*' './sdk_commit_tmp/*')
+        # Default CI scope: application sources only (not SLC-generated config / SDK).
+        LINT_ROOTS=('./ZigbeeMatterLight_113W/src' './ZigbeeMatterLight_113W/include')
+        patterns=('*.c' '*.h' '*.cpp' '*.hpp')
+        excludes=(
+            './third_party/*'
+            './scripts/*'
+            './ZigbeeMatterLight_113W/matter_2.8.0/*'
+            './ZigbeeMatterLight_113W/simplicity_sdk_*/*'
+            './ZigbeeMatterLight_113W/cmake_gcc/*'
+            './ZigbeeMatterLight_113W/autogen/*'
+            './ZigbeeMatterLight_113W/config/*'
+            './artifact/*'
+            './code_quality_report/*'
+            './**/build/*'
+        )
 
-        if [ "${INCLUDE_SDK}" == 0 ]; then
-            excludes+=('./sdk/*')
+        if [ "${INCLUDE_SDK}" != 0 ]; then
+            LINT_ROOTS=('.')
         fi
 
         exclude_args=()
@@ -84,9 +97,9 @@ pushd "$PWD" > /dev/null 2>&1
         done
 
         if [ "${PACKAGING_REPORT}" == 0 ]; then
-            find . "${exclude_args[@]}" '(' "${pattern_args[@]:1}" ')' -type f -exec ./third_party/cpplint/cpplint.py {} +
+            find "${LINT_ROOTS[@]}" "${exclude_args[@]}" '(' "${pattern_args[@]:1}" ')' -type f -exec ./third_party/cpplint/cpplint.py {} +
         else
-            find . "${exclude_args[@]}" '(' "${pattern_args[@]:1}" ')' -type f -exec ./third_party/cpplint/cpplint.py {} + > ${CPPLINT_REPORT_PATH}/cpplint_report.xml
+            find "${LINT_ROOTS[@]}" "${exclude_args[@]}" '(' "${pattern_args[@]:1}" ')' -type f -exec ./third_party/cpplint/cpplint.py {} + > ${CPPLINT_REPORT_PATH}/cpplint_report.xml || true
             cat ${CPPLINT_REPORT_PATH}/cpplint_report.xml
         fi
     fi

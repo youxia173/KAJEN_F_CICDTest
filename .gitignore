@@ -1,4 +1,11 @@
 Matter-Bootloader_113W/cmake_gcc/build
 ZigbeeMatterLight_113W/cmake_gcc/build
 ZigbeeMatterLightSolution_SixG301M113W_cmake/build
+scripts/unittest/build/
+code_quality_report/
+code_quality_report.tar.gz
+release_out/
 core.[0-9]*
+*.o
+*.d
+.DS_Store

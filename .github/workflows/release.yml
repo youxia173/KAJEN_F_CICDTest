@@ -1,0 +1,121 @@
+# IKEA CD: tag releases, package artifacts, publish notes.
+# OTA upload to Homesmart is gated on secrets + API (TODO when credentials available).
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 0.3.3) without leading v"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: package-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VER="${{ github.event.inputs.version }}"
+          else
+            VER="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VER}" >> "$GITHUB_OUTPUT"
+
+      - name: Collect local artifacts (if present)
+        run: |
+          mkdir -p release_out
+          if [[ -d artifact ]]; then
+            cp -a artifact/. release_out/ || true
+          fi
+          # Prefer latest packaged s37 names if present
+          shopt -s nullglob
+          for f in artifact/*.s37 artifact/*.gbl; do
+            cp -a "$f" release_out/
+          done
+          ls -la release_out || true
+
+      - name: Write release notes stub
+        run: |
+          cat > release_out/RELEASE_NOTES.md <<EOF
+          # KAJEN_F / SixG301 release ${{ steps.ver.outputs.version }}
+
+          - Tag: ${{ steps.ver.outputs.tag }}
+          - Commit: ${{ github.sha }}
+          - Built via GitHub Actions Release workflow
+
+          ## Contents
+          Firmware binaries and related build artifacts for SIMG301M113WIH.
+
+          ## OTA
+          Homesmart OTA upload runs when secrets \`IKEA_OTA_*\` are configured
+          (see docs/CI_CD.md).
+          EOF
+
+      - name: Upload release folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ steps.ver.outputs.version }}
+          path: release_out/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          body_path: release_out/RELEASE_NOTES.md
+          files: |
+            release_out/*
+          fail_on_unmatched_files: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  ota-upload:
+    name: homesmart-ota
+    needs: package
+    runs-on: ubuntu-latest
+    # Enable with repo variable ENABLE_OTA_UPLOAD=true after secrets are configured.
+    if: ${{ vars.ENABLE_OTA_UPLOAD == 'true' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download release package
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release_out
+          merge-multiple: true
+
+      - name: Upload to Homesmart OTA (placeholder)
+        env:
+          IKEA_OTA_API_URL: ${{ secrets.IKEA_OTA_API_URL }}
+          IKEA_OTA_TOKEN: ${{ secrets.IKEA_OTA_TOKEN }}
+        run: |
+          if [[ -z "${IKEA_OTA_API_URL}" || -z "${IKEA_OTA_TOKEN}" ]]; then
+            echo "ERROR: set secrets IKEA_OTA_API_URL and IKEA_OTA_TOKEN" >&2
+            exit 1
+          fi
+          echo "TODO: call Homesmart OTA API with release_out binaries"
+          echo "API=${IKEA_OTA_API_URL}"
+          ls -la release_out
+          # Example (replace with official API when provided by IKEA):
+          # curl -fsSL -X POST "$IKEA_OTA_API_URL" \
+          #   -H "Authorization: Bearer $IKEA_OTA_TOKEN" \
+          #   -F "file=@release_out/firmware.s37"
+          exit 0
