@@ -79,19 +79,29 @@ jobs:
   unittest:
     name: unittest
     runs-on: ubuntu-latest
-    # Host unit tests need kt_components / unit_test scaffolding — enable when present.
-    if: ${{ hashFiles('kt_components/**', 'unit_test/**') != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Decide whether to run host unit tests
+        id: decide
+        shell: bash
+        run: |
+          if [ -d "kt_components" ] || [ -d "unit_test" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install deps
+        if: steps.decide.outputs.run == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake pkg-config libcmocka-dev
 
       - name: Run unit tests
+        if: steps.decide.outputs.run == 'true'
         run: bash scripts/unittest/runner.sh
 
   # Firmware build needs Silicon Labs SDK + ARM toolchain.
