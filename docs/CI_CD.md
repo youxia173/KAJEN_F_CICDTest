@@ -18,7 +18,7 @@ This repository follows Inter IKEA Homesmart DevOps expectations:
 | cppcheck | PR / push | `scripts/cppcheck/runner.sh` |
 | unittest | PR / push (only if `kt_components/` or `unit_test/` exist) | `scripts/unittest/runner.sh` |
 | firmware build | optional (`ENABLE_FIRMWARE_BUILD=true` + GHCR image) | `.github/workflows/ci.yml` → `docker pull` + `docker run build` |
-| docker image (GHCR) | push `docker/**` or manual | `.github/workflows/docker-image.yml` |
+| docker image (GHCR) | **manual only** (Actions → Run workflow) | `.github/workflows/docker-image.yml` |
 | release package | tag `v*` | rename `artifact/...-full.s37` → `silabs_MatterAndZigger_SixG301_V{ver}.s37` only |
 | Homesmart OTA | release, if secrets set | placeholder step in `release.yml` |
 
@@ -42,12 +42,13 @@ bash scripts/ci_local.sh --build-only
 
 **Variables (Settings → Variables):**
 
-- `ENABLE_FIRMWARE_BUILD=true` — enable firmware job (needs GHCR image built first)
+- `ENABLE_FIRMWARE_BUILD` — leave **unset or `false`** until GHCR image build succeeds once; then set `true`
 - `GHCR_FIRMWARE_IMAGE` — optional override, default `ghcr.io/<owner>/kajen-sixg301:sdk-2025.12.1`
 - `CI_STRICT_LINT=true` — make cpplint fail the CI job
 
 Cloud firmware build uses the **full SiSDK Docker image** on GHCR (see `docker/README.md` § GHCR).  
-Build the image once via Actions workflow **Build Docker image (GHCR)** before enabling `ENABLE_FIRMWARE_BUILD`.
+Run **Build Docker image (GHCR)** manually from Actions while fixing the image; re-enable auto push in `docker-image.yml` when green.  
+Only then set `ENABLE_FIRMWARE_BUILD=true`.
 
 **Secrets (Settings → Secrets):**
 
