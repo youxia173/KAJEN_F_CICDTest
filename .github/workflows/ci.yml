@@ -137,9 +137,19 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull firmware build image
-        run: docker pull "${{ steps.image.outputs.ref }}"
+        id: pull
+        shell: bash
+        run: |
+          ref="${{ steps.image.outputs.ref }}"
+          if docker pull "${ref}"; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=GHCR image missing::Could not pull ${ref} (manifest unknown?). Run workflow 'Build Docker image (GHCR)' successfully first, then re-run CI."
+          fi
 
       - name: Build firmware in container
+        if: steps.pull.outputs.ready == 'true'
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
@@ -148,6 +158,7 @@ jobs:
             build
 
       - name: Upload firmware artifacts
+        if: steps.pull.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ github.sha }}
