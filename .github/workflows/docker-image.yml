@@ -22,6 +22,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: kajen-sixg301
   IMAGE_TAG: sdk-2025.12.1
+  BUILDKIT_PROGRESS: plain
 
 jobs:
   build-and-push:

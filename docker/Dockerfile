@@ -106,14 +106,14 @@ USER ${BUILD_USER}
 WORKDIR /home/${BUILD_USER}
 
 COPY --chown=${BUILD_USER}:${BUILD_USER} docker/install_slt_packages.sh /tmp/install_slt_packages.sh
-COPY --chown=${BUILD_USER}:${BUILD_USER} docker/pkg.slt.ci /tmp/pkg.slt.ci
-COPY --chown=${BUILD_USER}:${BUILD_USER} docker/pkg.slt.full /tmp/pkg.slt.full
+COPY --chown=${BUILD_USER}:${BUILD_USER} docker/pkg.ci.slt /tmp/pkg.ci.slt
+COPY --chown=${BUILD_USER}:${BUILD_USER} docker/pkg.full.slt /tmp/pkg.full.slt
 RUN chmod +x /tmp/install_slt_packages.sh
 
 # Install toolchain + SDK via slt (see install_slt_packages.sh for per-package logs).
 RUN set -eux \
     && mkdir -p "${HOME}/docker" \
-    && cp /tmp/pkg.slt.ci /tmp/install_slt_packages.sh /tmp/pkg.slt.full "${HOME}/docker/" \
+    && cp /tmp/pkg.ci.slt /tmp/install_slt_packages.sh /tmp/pkg.full.slt "${HOME}/docker/" \
     && export CMAKE_VERSION="${CMAKE_VERSION}" \
        NINJA_VERSION="${NINJA_VERSION}" \
        COMMANDER_VERSION="${COMMANDER_VERSION}" \
@@ -122,7 +122,7 @@ RUN set -eux \
        INSTALL_SLT_PACKAGES="${INSTALL_SLT_PACKAGES}" \
        INSTALL_SLC_TOOLS="${INSTALL_SLC_TOOLS}" \
     && "${HOME}/docker/install_slt_packages.sh" \
-    && rm -rf /tmp/install_slt_packages.sh /tmp/pkg.slt.ci /tmp/pkg.slt.full
+    && rm -rf /tmp/install_slt_packages.sh /tmp/pkg.ci.slt /tmp/pkg.full.slt
 
 USER root
 COPY --chown=${BUILD_USER}:${BUILD_USER} docker/entrypoint.sh /usr/local/bin/entrypoint.sh
