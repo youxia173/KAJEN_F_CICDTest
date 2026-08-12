@@ -14,15 +14,17 @@ This repository follows Inter IKEA Homesmart DevOps expectations:
 
 | Stage | Trigger | Script / workflow |
 |---|---|---|
-| cpplint | PR / push | `scripts/linter/linter.sh` via `.github/workflows/ci.yml` |
-| cppcheck | PR / push | `scripts/cppcheck/runner.sh` |
-| unittest | PR / push (only if `kt_components/` or `unit_test/` exist) | `scripts/unittest/runner.sh` |
+| cpplint | **manual only** (Actions → CI) | `scripts/linter/linter.sh` via `.github/workflows/ci.yml` |
+| cppcheck | **manual only** | `scripts/cppcheck/runner.sh` |
+| unittest | **manual only** (if test dirs exist) | `scripts/unittest/runner.sh` |
 | firmware build | optional (`ENABLE_FIRMWARE_BUILD=true` + GHCR image) | `.github/workflows/ci.yml` → `docker pull` + `docker run build` |
 | docker image (GHCR) | **manual only** (Actions → Run workflow) | `.github/workflows/docker-image.yml` |
 | release package | tag `v*` | rename `artifact/...-full.s37` → `silabs_MatterAndZigger_SixG301_V{ver}.s37` only |
 | Homesmart OTA | release, if secrets set | placeholder step in `release.yml` |
 
 ## Local CI
+
+While cloud CI is paused, use local checks:
 
 ```bash
 # lint + cppcheck (same as default GitHub CI)
@@ -37,6 +39,8 @@ bash scripts/ci_local.sh --with-build
 # firmware only (no lint/cppcheck)
 bash scripts/ci_local.sh --build-only
 ```
+
+Re-enable auto CI on push/PR: uncomment `push` / `pull_request` in `.github/workflows/ci.yml`.
 
 ## Repo variables / secrets
 

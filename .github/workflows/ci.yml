@@ -1,12 +1,11 @@
 # IKEA NonFuncReq / DevOps: CI pipeline in version control.
 # Pipeline steps stay short; logic lives in scripts/ (see scripts/ci_local.sh).
+#
+# Auto CI on push/PR is paused while GHCR Docker image is being fixed.
+# Run manually from Actions, or uncomment push/pull_request below when ready.
 name: CI
 
 on:
-  push:
-    branches: [main, master, develop]
-  pull_request:
-    branches: [main, master, develop]
   workflow_dispatch:
     inputs:
       strict_lint:
@@ -15,6 +14,10 @@ on:
         default: "false"
         type: choice
         options: ["false", "true"]
+  # push:
+  #   branches: [main, master, develop]
+  # pull_request:
+  #   branches: [main, master, develop]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
