@@ -40,7 +40,7 @@ docker/
 | CMake 目录 | `ZigbeeMatterLightSolution_SixG301M113W_cmake` |
 | SLC part | `simg301m113wih` |
 | SiSDK | `2025.12.1` |
-| Matter extension | `2.8.0` |
+| Matter extension (slt) | `2025.12.1`（与 SiSDK 同 release id；工程组件版本为 `2.8.0`） |
 
 ## 2. 构建镜像
 

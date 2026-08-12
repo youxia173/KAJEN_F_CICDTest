@@ -106,23 +106,23 @@ USER ${BUILD_USER}
 WORKDIR /home/${BUILD_USER}
 
 COPY --chown=${BUILD_USER}:${BUILD_USER} docker/install_slt_packages.sh /tmp/install_slt_packages.sh
+COPY --chown=${BUILD_USER}:${BUILD_USER} docker/pkg.slt.ci /tmp/pkg.slt.ci
+COPY --chown=${BUILD_USER}:${BUILD_USER} docker/pkg.slt.full /tmp/pkg.slt.full
 RUN chmod +x /tmp/install_slt_packages.sh
 
 # Install toolchain + SDK via slt (see install_slt_packages.sh for per-package logs).
 RUN set -eux \
+    && mkdir -p "${HOME}/docker" \
+    && cp /tmp/pkg.slt.ci /tmp/install_slt_packages.sh /tmp/pkg.slt.full "${HOME}/docker/" \
     && export CMAKE_VERSION="${CMAKE_VERSION}" \
        NINJA_VERSION="${NINJA_VERSION}" \
        COMMANDER_VERSION="${COMMANDER_VERSION}" \
        GCC_ARM_VERSION="${GCC_ARM_VERSION}" \
        SIMPLICITY_SDK_VERSION="${SIMPLICITY_SDK_VERSION}" \
-       MATTER_EXTENSION_VERSION="${MATTER_EXTENSION_VERSION}" \
-       SLC_CLI_VERSION="${SLC_CLI_VERSION}" \
-       JAVA21_VERSION="${JAVA21_VERSION}" \
-       ZAP_VERSION="${ZAP_VERSION}" \
        INSTALL_SLT_PACKAGES="${INSTALL_SLT_PACKAGES}" \
        INSTALL_SLC_TOOLS="${INSTALL_SLC_TOOLS}" \
-    && /tmp/install_slt_packages.sh \
-    && rm -f /tmp/install_slt_packages.sh
+    && "${HOME}/docker/install_slt_packages.sh" \
+    && rm -rf /tmp/install_slt_packages.sh /tmp/pkg.slt.ci /tmp/pkg.slt.full
 
 USER root
 COPY --chown=${BUILD_USER}:${BUILD_USER} docker/entrypoint.sh /usr/local/bin/entrypoint.sh
