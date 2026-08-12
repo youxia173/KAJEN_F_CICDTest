@@ -17,6 +17,12 @@ install_one() {
             return 0
         fi
         echo "WARN: slt install failed (${attempt}/${SLT_MAX_ATTEMPTS}): ${pkg}"
+
+        # If a previous download got corrupted, SLT/Conan may keep the bad
+        # `conan_package.tgz` under `${HOME}/.silabs/slt/installs/conan/p/*/d/`.
+        # Remove it to force re-download on next attempt.
+        rm -f "${HOME}/.silabs/slt/installs/conan/p/"*/d/conan_package.tgz 2>/dev/null || true
+
         attempt=$((attempt + 1))
         sleep "${SLT_RETRY_SLEEP_SEC}"
     done
@@ -36,15 +42,10 @@ slt_where_or_fail() {
 }
 
 install_matter_extension() {
-    local ver=""
-    for ver in "~" "${SIMPLICITY_SDK_VERSION:-}" "2025.12.0" "2025.12.1"; do
-        if install_one "matter_extension/${ver}"; then
-            return 0
-        fi
-        echo "WARN: matter_extension/${ver} failed, trying next version..."
-    done
-    echo "ERROR: could not install matter_extension" >&2
-    return 1
+    # Only install via "~" because available `matter_extension/<x.y.z>` versions
+    # are not guaranteed to match `simplicity-sdk/<release>` versions in CI.
+    # Using "~" lets SLT resolve a compatible version (e.g. the 2.9.1 in GHCR logs).
+    install_one "matter_extension/~"
 }
 
 if [ "${INSTALL_SLT_PACKAGES:-1}" != "1" ]; then
