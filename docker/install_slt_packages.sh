@@ -65,6 +65,25 @@ echo "slt install: conan (engine)"
 echo "========================================"
 install_one conan
 
+configure_conan_remote() {
+    local url="${CONAN_REMOTE_URL:-}"
+    if [ -z "${url}" ]; then
+        return 0
+    fi
+    local remotes_json="${HOME}/.silabs/slt/installs/conan/remotes.json"
+    if [ ! -f "${remotes_json}" ]; then
+        echo "WARN: conan remotes.json not found: ${remotes_json}" >&2
+        return 0
+    fi
+    echo "Config conan remote url -> ${url}"
+    # Update the first remote entry (named public-conan-silabs-net) to alternate mirror.
+    # jq is installed in the Dockerfile apt deps.
+    jq --arg url "${url}" '.remotes[0].url = $url' "${remotes_json}" > "${remotes_json}.tmp"
+    mv -f "${remotes_json}.tmp" "${remotes_json}"
+}
+
+configure_conan_remote
+
 if [ -f "${RECIPE}" ]; then
     echo "========================================"
     echo "slt install -f ${RECIPE}"

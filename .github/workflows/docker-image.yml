@@ -62,6 +62,8 @@ jobs:
           build-args: |
             INSTALL_SLT_PACKAGES=1
             INSTALL_SLC_TOOLS=0
+            # Workaround for occasional 521 from conan.silabs.net (mirror).
+            CONAN_REMOTE_URL=https://conan-aus.silabs.net
 
       - name: Summary
         run: |
