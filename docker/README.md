@@ -100,13 +100,45 @@ bash scripts/release/package_firmware.sh 0.3.6
 | `check-slc` | 检查 java / slc / zap |
 | `shell` | 交互 bash |
 
-## 4. 和 GitHub Actions 的关系
+## 4. GHCR（GitHub 云端自动构建镜像）
 
-当前云端 `ubuntu-latest` **没有** SiSDK，`firmware-build` 会跳过。  
-Docker 镜像打通并推到**私有**镜像仓库后，可把 CI 改成 `docker run ... build`。  
-SiSDK 许可通常不允许公开镜像，请用私有 registry。
+镜像放在 **GitHub Container Registry**（私有，跟仓库权限走），不用本机上传完整包。
 
-本阶段目标：本机装好 Docker → 精简镜像能 `build` → 再考虑完整镜像 / CI。
+### 第一次（仓库管理员）
+
+1. Push 含 `.github/workflows/docker-image.yml` 的代码  
+2. GitHub → **Actions** → **Build Docker image (GHCR)** → **Run workflow**  
+   （首次可能要 30～90 分钟，slt 在云端下载 SDK）  
+3. 完成后在 **Packages** 里能看到 `kajen-sixg301`  
+
+镜像地址示例：
+
+```text
+ghcr.io/barryjim/kajen-sixg301:sdk-2025.12.1
+```
+
+### 开启 CI 云端编固件
+
+仓库 **Variables**（可选）：
+
+| 变量 | 值 |
+|------|-----|
+| `ENABLE_FIRMWARE_BUILD` | `true` |
+| `GHCR_FIRMWARE_IMAGE` | 留空则用默认 `ghcr.io/<owner>/kajen-sixg301:sdk-2025.12.1` |
+
+之后 push/PR 会 pull GHCR 镜像并在容器里 `build`。
+
+### 何时重新 build 镜像
+
+- 改了 `docker/Dockerfile` 或 `entrypoint.sh`（push 到 main 会自动触发）  
+- 或手动再跑 **Build Docker image (GHCR)**
+
+### 本机仍可用 slim（不依赖 GHCR）
+
+```bash
+docker run --rm -v "$PWD":/workspace -v "$HOME/.silabs":/home/hans/.silabs:ro \
+  -w /workspace --entrypoint /workspace/docker/entrypoint.sh kajen-sixg301:slim build
+```
 
 ## 5. 常见问题
 
