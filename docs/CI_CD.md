@@ -42,11 +42,12 @@ bash scripts/ci_local.sh --build-only
 
 **Variables (Settings → Variables):**
 
-- `ENABLE_FIRMWARE_BUILD=true` — enable firmware job
-- `SILABS_RUNNER` — self-hosted runner label/name that has SiSDK + ARM GCC (`slt`, ninja, commander)
+- `ENABLE_FIRMWARE_BUILD=true` — enable firmware job (needs GHCR image built first)
+- `GHCR_FIRMWARE_IMAGE` — optional override, default `ghcr.io/<owner>/kajen-sixg301:sdk-2025.12.1`
 - `CI_STRICT_LINT=true` — make cpplint fail the CI job
 
-GitHub-hosted `ubuntu-latest` **cannot** compile this firmware: CMake looks up ninja/gcc via Silicon Labs `slt` under `~/.silabs/slt/...`. Without a self-hosted runner, the firmware job will skip instead of failing.
+Cloud firmware build uses the **full SiSDK Docker image** on GHCR (see `docker/README.md` § GHCR).  
+Build the image once via Actions workflow **Build Docker image (GHCR)** before enabling `ENABLE_FIRMWARE_BUILD`.
 
 **Secrets (Settings → Secrets):**
 
@@ -55,7 +56,7 @@ GitHub-hosted `ubuntu-latest` **cannot** compile this firmware: CMake looks up n
 
 ## Still to do (IKEA full compliance)
 
-1. Package Silicon Labs build env as Docker image → custom GitHub Action (see `docker/README.md`; local slim image first)
+1. ~~Package Silicon Labs build env as Docker image~~ → GHCR workflow `docker-image.yml` (run once on GitHub)
 2. Mirror this repo to Inter IKEA GitHub on delivery
 3. Wire official Homesmart OTA upload API in `release.yml`
 4. Add host unit tests under app `*/test/` + `kt_components` if required
