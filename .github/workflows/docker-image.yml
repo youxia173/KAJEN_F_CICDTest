@@ -58,6 +58,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             INSTALL_SLT_PACKAGES=1
+            INSTALL_SLC_TOOLS=0
 
       - name: Summary
         run: |

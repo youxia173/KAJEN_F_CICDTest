@@ -44,6 +44,8 @@ ARG MATTER_EXTENSION_VERSION=2.8.0
 ARG SLC_CLI_VERSION=6.0.17
 ARG JAVA21_VERSION=21.0.5
 ARG ZAP_VERSION=2026.02.26
+# CI firmware build only needs compile toolchain + SDK (no slc generate).
+ARG INSTALL_SLC_TOOLS=0
 
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
@@ -103,43 +105,24 @@ RUN set -eux \
 USER ${BUILD_USER}
 WORKDIR /home/${BUILD_USER}
 
-# 安装 Conan 引擎、SLC 运行时与编译依赖（可选；slim 镜像可关闭）
+COPY --chown=${BUILD_USER}:${BUILD_USER} docker/install_slt_packages.sh /tmp/install_slt_packages.sh
+RUN chmod +x /tmp/install_slt_packages.sh
+
+# Install toolchain + SDK via slt (see install_slt_packages.sh for per-package logs).
 RUN set -eux \
-    && if [ "${INSTALL_SLT_PACKAGES}" != "1" ]; then \
-         echo "Skip slt package install (INSTALL_SLT_PACKAGES=${INSTALL_SLT_PACKAGES})"; \
-         exit 0; \
-       fi \
-    && slt --non-interactive install conan \
-    && slt --non-interactive install \
-         "cmake/${CMAKE_VERSION}" \
-         "ninja/${NINJA_VERSION}" \
-         "commander/${COMMANDER_VERSION}" \
-         "gcc-arm-none-eabi/${GCC_ARM_VERSION}" \
-         "simplicity-sdk/${SIMPLICITY_SDK_VERSION}" \
-         "matter_extension/${MATTER_EXTENSION_VERSION}" \
-         "java21/${JAVA21_VERSION}" \
-         "zap/${ZAP_VERSION}" \
-         "slc-cli/${SLC_CLI_VERSION}" \
-    && mkdir -p "${HOME}/.silabs/slt/bin" \
-    && ln -sfn "$(slt where java21)/jre/bin/java" "${HOME}/.silabs/slt/bin/java" \
-    && ln -sfn "$(slt where cmake)/bin/cmake" "${HOME}/.silabs/slt/bin/cmake" \
-    && ln -sfn "$(slt where ninja)/ninja" "${HOME}/.silabs/slt/bin/ninja" \
-    && ln -sfn "$(slt where commander)/commander" "${HOME}/.silabs/slt/bin/commander" \
-    && ln -sfn "$(slt where gcc-arm-none-eabi)/bin/arm-none-eabi-gcc" \
-         "${HOME}/.silabs/slt/bin/arm-none-eabi-gcc" \
-    && ln -sfn "$(slt where zap)/zap-cli" "${HOME}/.silabs/slt/bin/zap-cli" \
-    && ln -sfn "$(slt where zap)/zap" "${HOME}/.silabs/slt/bin/zap" \
-    # slc 用 dirname 找 slc.jar，必须包一层 wrapper
-    && printf '#!/bin/sh\nexec "%s/slc" "$@"\n' "$(slt where slc-cli)" \
-         > "${HOME}/.silabs/slt/bin/slc" \
-    && chmod +x "${HOME}/.silabs/slt/bin/slc" \
-    # 冒烟：java + slc 必须可用
-    && java -version \
-    && slc --help >/dev/null \
-    && rm -rf \
-         "${HOME}/.silabs/slt/installs/archive/"*.zip \
-         "${HOME}/.silabs/slt/installs/archive/"*.tar.* \
-         "${HOME}/.silabs/slt/installs/conan/p/"*/d/
+    && export CMAKE_VERSION="${CMAKE_VERSION}" \
+       NINJA_VERSION="${NINJA_VERSION}" \
+       COMMANDER_VERSION="${COMMANDER_VERSION}" \
+       GCC_ARM_VERSION="${GCC_ARM_VERSION}" \
+       SIMPLICITY_SDK_VERSION="${SIMPLICITY_SDK_VERSION}" \
+       MATTER_EXTENSION_VERSION="${MATTER_EXTENSION_VERSION}" \
+       SLC_CLI_VERSION="${SLC_CLI_VERSION}" \
+       JAVA21_VERSION="${JAVA21_VERSION}" \
+       ZAP_VERSION="${ZAP_VERSION}" \
+       INSTALL_SLT_PACKAGES="${INSTALL_SLT_PACKAGES}" \
+       INSTALL_SLC_TOOLS="${INSTALL_SLC_TOOLS}" \
+    && /tmp/install_slt_packages.sh \
+    && rm -f /tmp/install_slt_packages.sh
 
 USER root
 COPY --chown=${BUILD_USER}:${BUILD_USER} docker/entrypoint.sh /usr/local/bin/entrypoint.sh
