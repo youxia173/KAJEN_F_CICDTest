@@ -17,7 +17,7 @@ This repository follows Inter IKEA Homesmart DevOps expectations:
 | cpplint | PR / push | `scripts/linter/linter.sh` via `.github/workflows/ci.yml` |
 | cppcheck | PR / push | `scripts/cppcheck/runner.sh` |
 | unittest | PR / push (only if `kt_components/` or `unit_test/` exist) | `scripts/unittest/runner.sh` |
-| firmware build | optional (`ENABLE_FIRMWARE_BUILD=true` repo variable + Silabs runner) | `scripts/ci_local.sh --with-build` |
+| firmware build | optional (`ENABLE_FIRMWARE_BUILD=true` + self-hosted SiLabs runner) | `scripts/ci_local.sh --build-only` |
 | release package | tag `v*` | `.github/workflows/release.yml` |
 | Homesmart OTA | release, if secrets set | placeholder step in `release.yml` |
 
@@ -30,8 +30,11 @@ bash scripts/ci_local.sh
 # fail on lint findings
 bash scripts/ci_local.sh --strict
 
-# also build firmware (needs Simplicity / cmake preset env)
+# also build firmware (needs Simplicity Studio / slt on this machine)
 bash scripts/ci_local.sh --with-build
+
+# firmware only (no lint/cppcheck)
+bash scripts/ci_local.sh --build-only
 ```
 
 ## Repo variables / secrets
@@ -39,8 +42,10 @@ bash scripts/ci_local.sh --with-build
 **Variables (Settings → Variables):**
 
 - `ENABLE_FIRMWARE_BUILD=true` — enable firmware job
-- `SILABS_RUNNER` — self-hosted runner label/name that has SiSDK + ARM GCC
+- `SILABS_RUNNER` — self-hosted runner label/name that has SiSDK + ARM GCC (`slt`, ninja, commander)
 - `CI_STRICT_LINT=true` — make cpplint fail the CI job
+
+GitHub-hosted `ubuntu-latest` **cannot** compile this firmware: CMake looks up ninja/gcc via Silicon Labs `slt` under `~/.silabs/slt/...`. Without a self-hosted runner, the firmware job will skip instead of failing.
 
 **Secrets (Settings → Secrets):**
 
