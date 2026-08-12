@@ -54,11 +54,22 @@ GitHub-hosted `ubuntu-latest` **cannot** compile this firmware: CMake looks up n
 
 ## Still to do (IKEA full compliance)
 
-1. Package Silicon Labs build env as Docker image → custom GitHub Action (separate tools repo)
+1. Package Silicon Labs build env as Docker image → custom GitHub Action (see `docker/README.md`; local slim image first)
 2. Mirror this repo to Inter IKEA GitHub on delivery
 3. Wire official Homesmart OTA upload API in `release.yml`
 4. Add host unit tests under app `*/test/` + `kt_components` if required
 5. IaC for any self-hosted runners (Terraform/Ansible) so IKEA can reproduce infra
+
+## Docker (firmware build env)
+
+See `docker/README.md`. Adapted from colleague Li-Bat image for this repo (`hans` HOME, SiSDK 2025.12.1, SIMG301).
+
+```bash
+# After installing Docker Engine:
+INSTALL_SLT_PACKAGES=0 IMAGE_TAG=kajen-sixg301:slim ./docker/build-image.sh
+docker run --rm -v "$PWD":/workspace -v "$HOME/.silabs":/home/hans/.silabs:ro \
+  -w /workspace kajen-sixg301:slim build
+```
 
 ## Mapping to existing project scripts
 
