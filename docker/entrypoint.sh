@@ -110,12 +110,15 @@ BuildProject()
     cmake_bin="$(ResolveCmakeBin)"
     echo "Using cmake: ${cmake_bin}"
 
-    cd "${CMAKE_DIR}"
+    # Host builds write absolute paths into CMakeCache.txt. Inside the container
+    # the repo is mounted at /workspace, so stale caches must be cleared.
+    echo "Cleaning CMake caches for container paths..."
+    rm -rf \
+        "${CMAKE_DIR}/build" \
+        "${PROJECT_ROOT}/ZigbeeMatterLight_113W/cmake_gcc/build" \
+        "${PROJECT_ROOT}/Matter-Bootloader_113W/cmake_gcc/build"
 
-    if [ -e "build" ] && [ ! -d "build" ]; then
-        echo "Warning: 'build' exists but is not a directory. Removing it..."
-        rm -f build
-    fi
+    cd "${CMAKE_DIR}"
     mkdir -p build
 
     echo "Step 1: Configuring project..."
