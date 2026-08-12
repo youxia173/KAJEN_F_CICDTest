@@ -33,21 +33,15 @@ jobs:
           else
             VER="${GITHUB_REF_NAME#v}"
           fi
+          VER="${VER#v}"
           echo "version=${VER}" >> "$GITHUB_OUTPUT"
           echo "tag=v${VER}" >> "$GITHUB_OUTPUT"
+          echo "fw=silabs_MatterAndZigger_SixG301_V${VER}.s37" >> "$GITHUB_OUTPUT"
 
-      - name: Collect local artifacts (if present)
+      - name: Package versioned firmware only
         run: |
           mkdir -p release_out
-          if [[ -d artifact ]]; then
-            cp -a artifact/. release_out/ || true
-          fi
-          # Prefer latest packaged s37 names if present
-          shopt -s nullglob
-          for f in artifact/*.s37 artifact/*.gbl; do
-            cp -a "$f" release_out/
-          done
-          ls -la release_out || true
+          bash scripts/release/package_firmware.sh "${{ steps.ver.outputs.version }}" release_out
 
       - name: Write release notes stub
         run: |
@@ -56,10 +50,8 @@ jobs:
 
           - Tag: ${{ steps.ver.outputs.tag }}
           - Commit: ${{ github.sha }}
-          - Built via GitHub Actions Release workflow
-
-          ## Contents
-          Firmware binaries and related build artifacts for SIMG301M113WIH.
+          - Firmware: ${{ steps.ver.outputs.fw }}
+            (renamed from artifact/ZigbeeMatterLightSolution_SixG301M113W-full.s37)
 
           ## OTA
           Homesmart OTA upload runs when secrets \`IKEA_OTA_*\` are configured
@@ -70,7 +62,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ steps.ver.outputs.version }}
-          path: release_out/
+          path: |
+            release_out/${{ steps.ver.outputs.fw }}
+            release_out/RELEASE_NOTES.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -79,8 +73,8 @@ jobs:
           name: ${{ steps.ver.outputs.tag }}
           body_path: release_out/RELEASE_NOTES.md
           files: |
-            release_out/*
-          fail_on_unmatched_files: false
+            release_out/${{ steps.ver.outputs.fw }}
+          fail_on_unmatched_files: true
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -111,11 +105,12 @@ jobs:
             echo "ERROR: set secrets IKEA_OTA_API_URL and IKEA_OTA_TOKEN" >&2
             exit 1
           fi
-          echo "TODO: call Homesmart OTA API with release_out binaries"
+          FW="$(ls release_out/silabs_MatterAndZigger_SixG301_V*.s37 | head -1)"
+          echo "TODO: call Homesmart OTA API with ${FW}"
           echo "API=${IKEA_OTA_API_URL}"
           ls -la release_out
           # Example (replace with official API when provided by IKEA):
           # curl -fsSL -X POST "$IKEA_OTA_API_URL" \
           #   -H "Authorization: Bearer $IKEA_OTA_TOKEN" \
-          #   -F "file=@release_out/firmware.s37"
+          #   -F "file=@${FW}"
           exit 0

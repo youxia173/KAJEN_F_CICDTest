@@ -18,7 +18,7 @@ This repository follows Inter IKEA Homesmart DevOps expectations:
 | cppcheck | PR / push | `scripts/cppcheck/runner.sh` |
 | unittest | PR / push (only if `kt_components/` or `unit_test/` exist) | `scripts/unittest/runner.sh` |
 | firmware build | optional (`ENABLE_FIRMWARE_BUILD=true` + self-hosted SiLabs runner) | `scripts/ci_local.sh --build-only` |
-| release package | tag `v*` | `.github/workflows/release.yml` |
+| release package | tag `v*` | rename `artifact/...-full.s37` → `silabs_MatterAndZigger_SixG301_V{ver}.s37` only |
 | Homesmart OTA | release, if secrets set | placeholder step in `release.yml` |
 
 ## Local CI
