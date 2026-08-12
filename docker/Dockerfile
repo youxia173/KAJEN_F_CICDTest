@@ -110,6 +110,17 @@ COPY --chown=${BUILD_USER}:${BUILD_USER} docker/pkg.ci.slt /tmp/pkg.ci.slt
 COPY --chown=${BUILD_USER}:${BUILD_USER} docker/pkg.full.slt /tmp/pkg.full.slt
 RUN chmod +x /tmp/install_slt_packages.sh
 
+# Ensure SLT log location is writable.
+# On CI/GHCR the previous build cache layer can leave ~/.silabs owned by root,
+# causing `slt install` to panic when opening ~/.silabs/slt/slt.log.
+USER root
+RUN set -eux \
+    && rm -rf "/home/${BUILD_USER}/.silabs" \
+    && mkdir -p "/home/${BUILD_USER}/.silabs/slt" \
+    && chown -R "${BUILD_UID}:${BUILD_GID}" "/home/${BUILD_USER}/.silabs"
+
+USER ${BUILD_USER}
+
 # Install toolchain + SDK via slt (see install_slt_packages.sh for per-package logs).
 RUN set -eux \
     && mkdir -p "${HOME}/docker" \
