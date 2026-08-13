@@ -1,7 +1,7 @@
 # Build the full SiSDK firmware image and push to GitHub Container Registry (GHCR).
 # First run is slow (slt downloads SDK). Re-run when docker/ changes or manually.
 #
-# Auto push is disabled while GHCR build is still being fixed — run manually from Actions.
+# Auto push is intentionally disabled to save Actions minutes — run manually from Actions.
 name: Build Docker image (GHCR)
 
 on:

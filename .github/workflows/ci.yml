@@ -1,8 +1,9 @@
 # IKEA NonFuncReq / DevOps: CI pipeline in version control.
 # Pipeline steps stay short; logic lives in scripts/ (see scripts/ci_local.sh).
 #
-# Auto CI on push/PR is paused while GHCR Docker image is being fixed.
-# Run manually from Actions, or uncomment push/pull_request below when ready.
+# Auto CI on push/PR is intentionally disabled to save private-repo Actions minutes.
+# Run manually: Actions → CI → Run workflow.
+# Re-enable later by uncommenting push / pull_request below.
 name: CI
 
 on:

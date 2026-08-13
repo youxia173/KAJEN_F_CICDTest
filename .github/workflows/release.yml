@@ -9,11 +9,12 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (e.g. 0.3.3) without leading v"
+        description: "Release version (e.g. 0.3.6) without leading v"
         required: true
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   package:
@@ -38,6 +39,42 @@ jobs:
           echo "tag=v${VER}" >> "$GITHUB_OUTPUT"
           echo "fw=silabs_MatterAndZigger_SixG301_V${VER}.s37" >> "$GITHUB_OUTPUT"
 
+      # Prefer firmware built by a successful manual CI run on this commit.
+      - name: Prefer CI firmware artifact for this commit
+        id: ci_fw
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          SHA="${{ github.sha }}"
+          ART_NAME="firmware-${SHA}"
+          echo "Looking for CI artifact ${ART_NAME} on ${SHA}..."
+          mapfile -t RUN_IDS < <(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SHA}&status=completed&per_page=30" \
+              --jq '.workflow_runs[] | select(.name=="CI" and .conclusion=="success") | .id'
+          )
+          got=0
+          for id in "${RUN_IDS[@]:-}"; do
+            echo "Trying CI run ${id}..."
+            if gh run download "${id}" -n "${ART_NAME}" -D artifact 2>/dev/null; then
+              got=1
+              echo "Downloaded ${ART_NAME} from run ${id}"
+              break
+            fi
+          done
+          if [[ "${got}" -eq 1 ]]; then
+            # download may nest files; flatten .s37 into artifact/
+            found="$(find artifact -type f -name 'ZigbeeMatterLightSolution_SixG301M113W-full.s37' | head -1 || true)"
+            if [[ -n "${found}" && "${found}" != "artifact/ZigbeeMatterLightSolution_SixG301M113W-full.s37" ]]; then
+              mv -f "${found}" artifact/ZigbeeMatterLightSolution_SixG301M113W-full.s37
+            fi
+            echo "source=ci" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=No CI firmware artifact::No successful CI artifact ${ART_NAME}. Falling back to repo artifact/ if present. Tip: run CI on this commit before tagging."
+            echo "source=repo" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Package versioned firmware only
         run: |
           mkdir -p release_out
@@ -51,7 +88,7 @@ jobs:
           - Tag: ${{ steps.ver.outputs.tag }}
           - Commit: ${{ github.sha }}
           - Firmware: ${{ steps.ver.outputs.fw }}
-            (renamed from artifact/ZigbeeMatterLightSolution_SixG301M113W-full.s37)
+          - Firmware source: ${{ steps.ci_fw.outputs.source }} (ci = GHCR CI artifact; repo = committed artifact/)
 
           ## OTA
           Homesmart OTA upload runs when secrets \`IKEA_OTA_*\` are configured
