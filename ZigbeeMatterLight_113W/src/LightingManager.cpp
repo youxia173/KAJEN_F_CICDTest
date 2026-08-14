@@ -148,6 +148,20 @@ bool LightingManager::InitiateAction(int32_t aActor, Action_t aAction, uint8_t *
     bool action_initiated = false;
     State_t new_state;
 
+    // Allow reversing mid-transition. Toggle + Level-coupled Off used to leave
+    // mState stuck in *Initiated when AppTask was busy, then subsequent ON/OFF
+    // were dropped ("Action is already in progress").
+    if (aAction == ON_ACTION && (mState == kState_OffInitiated || mState == kState_OnInitiated))
+    {
+        CancelTimer();
+        mState = (mState == kState_OffInitiated) ? kState_OffCompleted : kState_OnCompleted;
+    }
+    else if (aAction == OFF_ACTION && (mState == kState_OnInitiated || mState == kState_OffInitiated))
+    {
+        CancelTimer();
+        mState = (mState == kState_OnInitiated) ? kState_OnCompleted : kState_OffCompleted;
+    }
+
     // Initiate Turn On/Off Action only when the previous one is complete.
     if (((mState == kState_OffCompleted) || mOffEffectArmed) && aAction == ON_ACTION)
     {

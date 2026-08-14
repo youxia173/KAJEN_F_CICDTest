@@ -119,8 +119,9 @@
 #define APP_RESET_COMPLETE_LEVEL_PCT 65u
 
 // AppTask queue: default SDK size (10) overflows when Matter/Zigbee/timers burst.
+// Button + effect(10ms) + actuator posts compete; 32 still overflows under ChipStack stalls.
 #ifndef APP_EVENT_QUEUE_SIZE
-#define APP_EVENT_QUEUE_SIZE 32
+#define APP_EVENT_QUEUE_SIZE 64
 #endif
 
 // Lighting transition timings

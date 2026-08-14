@@ -93,11 +93,19 @@ static RgbwFadeState g_rgbwFade = { false, 0, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 static osTimerId_t g_rgbwFadeTimer = nullptr;
 static osTimerId_t g_powMemSaveTimer = nullptr;
 static osTimerId_t g_attrFadeCoalesceTimer = nullptr;
+static osTimerId_t g_deferredFadeTimer = nullptr;
 static bool g_attrFadePending = false;
 static uint16_t g_attrFadeR = 0;
 static uint16_t g_attrFadeG = 0;
 static uint16_t g_attrFadeB = 0;
 static uint16_t g_attrFadeWPermille = 0;
+static bool g_deferredFadePending = false;
+static uint16_t g_deferredFadeR = 0;
+static uint16_t g_deferredFadeG = 0;
+static uint16_t g_deferredFadeB = 0;
+static uint16_t g_deferredFadeWPermille = 0;
+static uint32_t g_deferredFadeMs = 0;
+static bool g_deferredFadePreset = false;
 static bool g_powMemSavePending = false;
 static constexpr uint32_t kPowMemSaveDebounceMs = 1000u;
 static constexpr uint32_t kRgbwFadeStepMs = 10; // 100Hz — smoother W at high brightness during on/off fades
@@ -105,7 +113,7 @@ static constexpr uint16_t kFadeStepsMin = 6;   // >=60ms @ 10ms/step
 static constexpr uint16_t kFadeStepsMax = 80;  // <=800ms @ 10ms/step (on/off 400ms → 40 steps)
 static constexpr uint32_t kFadeRetargetMinMs = 80;
 static constexpr uint8_t kFadeRetargetMinDeltaRgb = 2;
-static constexpr uint32_t kAttrFadeCoalesceMs = 40u;
+static constexpr uint32_t kAttrFadeCoalesceMs = 80u;
 static uint32_t g_lastFadeRetargetTick = 0;
 static uint16_t g_lastAppliedR = 0;
 static uint16_t g_lastAppliedG = 0;
@@ -559,6 +567,19 @@ static void StartRgbwFade(uint16_t targetR, uint16_t targetG, uint16_t targetB, 
                           uint32_t durationMs, bool presetFade = false);
 static void ScheduleAttrRgbwFade(uint16_t targetR, uint16_t targetG, uint16_t targetB, uint16_t targetWPermille,
                                  uint32_t durationMs);
+static void DeferredFadeTimerCallback(void * context);
+
+static void DeferredFadeTimerCallback(void * context)
+{
+    (void) context;
+    if (!g_deferredFadePending)
+    {
+        return;
+    }
+    g_deferredFadePending = false;
+    StartRgbwFade(g_deferredFadeR, g_deferredFadeG, g_deferredFadeB, g_deferredFadeWPermille, g_deferredFadeMs,
+                   g_deferredFadePreset);
+}
 
 static void RgbwFadeTimerCallback(void * context)
 {
@@ -626,6 +647,31 @@ static void StartRgbwFade(uint16_t targetR, uint16_t targetG, uint16_t targetB, 
     if (targetWPermille > kWhitePermilleMax)
     {
         targetWPermille = kWhitePermilleMax;
+    }
+
+    // Attribute callbacks run with ChipStack locked. Doing SPI (SM15135E) under that lock
+    // stalls AppTask (button) and can fill the event queue — symptoms: App + physical key dead,
+    // while Matter ReportData / Zigbee timers still run.
+    if (chip::DeviceLayer::PlatformMgr().IsChipStackLockedByCurrentThread())
+    {
+        CancelAttrFadeCoalesce();
+        g_deferredFadeR         = targetR;
+        g_deferredFadeG         = targetG;
+        g_deferredFadeB         = targetB;
+        g_deferredFadeWPermille = targetWPermille;
+        g_deferredFadeMs         = durationMs;
+        g_deferredFadePreset    = presetFade;
+        g_deferredFadePending   = true;
+        if (g_deferredFadeTimer == nullptr)
+        {
+            g_deferredFadeTimer = osTimerNew(DeferredFadeTimerCallback, osTimerOnce, nullptr, nullptr);
+        }
+        if (g_deferredFadeTimer != nullptr)
+        {
+            (void) osTimerStop(g_deferredFadeTimer);
+            (void) osTimerStart(g_deferredFadeTimer, 1u);
+        }
+        return;
     }
 
     CancelAttrFadeCoalesce();
@@ -1450,6 +1496,7 @@ static void XYToRgb(uint16_t currentX, uint16_t currentY, uint8_t level255, uint
 #include <app-common/zap-generated/ids/Attributes.h>
 #include <app-common/zap-generated/ids/Clusters.h>
 #include <clusters/OnOff/Commands.h>
+#include <clusters/LevelControl/Commands.h>
 #include <app/ConcreteAttributePath.h>
 #include <app/reporting/reporting.h>
 #include <app/util/MatterCallbacks.h>
@@ -1623,9 +1670,18 @@ extern "C" void MatterSyncLevelBeforeOn()
 
     const bool prevSuppress = g_suppressAttributeHwOutput;
     g_suppressAttributeHwOutput = true;
-    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    // PreCommandReceived already holds ChipStack; nested Lock can deadlock Matter and
+    // make App On/Toggle appear dead while Level (no PreCommand sync) still works.
+    const bool needLock = !chip::DeviceLayer::PlatformMgr().IsChipStackLockedByCurrentThread();
+    if (needLock)
+    {
+        chip::DeviceLayer::PlatformMgr().LockChipStack();
+    }
     LevelControl::Attributes::CurrentLevel::Set(1, g_levelAtLastOn);
-    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+    if (needLock)
+    {
+        chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+    }
     g_suppressAttributeHwOutput = prevSuppress;
     g_memLevel = g_levelAtLastOn;
 #if defined(SL_CATALOG_ZIGBEE_ZCL_FRAMEWORK_CORE_PRESENT)
@@ -2090,6 +2146,16 @@ extern "C" void MatterSetOffTransitionActive(uint8_t active)
     g_offTransitionActive = (active != 0u);
 }
 
+extern "C" uint8_t MatterIsOffTransitionActive(void)
+{
+    return g_offTransitionActive ? 1u : 0u;
+}
+
+extern "C" uint8_t MatterGetMemOnOff(void)
+{
+    return g_memOnOff;
+}
+
 extern "C" void MatterSetButtonPresetPwmWithFade(uint16_t wPermille, uint16_t rPermille, uint16_t gPermille, uint16_t bPermille,
                                                    uint8_t level254)
 {
@@ -2428,8 +2494,27 @@ public:
                 MatterSetOffTransitionActive(0);
                 MatterSyncLevelBeforeOn();
             }
+            else if (commandPath.mCommandId == OnOff::Commands::Toggle::Id)
+            {
+                bool onoff = true;
+                (void) OnOff::Attributes::OnOff::Get(LIGHT_ENDPOINT, &onoff);
+                if (onoff)
+                {
+                    MatterSetOffTransitionActive(1);
+                }
+                else
+                {
+                    MatterSetOffTransitionActive(0);
+                    MatterSyncLevelBeforeOn();
+                }
+            }
             return CHIP_NO_ERROR;
         }
+
+        // IKEA App often pairs Toggle(Off) with MoveToLevel(1)/WithOnOff. Do NOT reject Level
+        // commands here: returning an error from PreCommandReceived maps poorly and under load
+        // can contribute to Invoke failures (e.g. UnsupportedEndpoint). Hardware ignore is
+        // already handled in MatterPostAttributeChangeCallback while off-fade is active.
 
         if (commandPath.mClusterId != ColorControl::Id)
         {

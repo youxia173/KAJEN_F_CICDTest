@@ -37,6 +37,10 @@
 #include <platform/PlatformManager.h>
 #include <tracing/macros.h>
 
+#ifdef __cplusplus
+extern "C" uint8_t MatterIsOffTransitionActive(void);
+#endif
+
 #ifdef MATTER_DM_PLUGIN_SCENES_MANAGEMENT
 #include <app/clusters/scenes-server/scenes-server.h>
 #endif // MATTER_DM_PLUGIN_SCENES_MANAGEMENT
@@ -574,6 +578,18 @@ static void setOnOffValue(EndpointId endpoint, bool onOff)
 #ifdef MATTER_DM_PLUGIN_ON_OFF
     if (emberAfContainsServer(endpoint, OnOff::Id))
     {
+        // Skip redundant Off only when OnOff is already false. Skipping while still ON
+        // (e.g. stale off-fade flag) would leave App unable to turn the light off via
+        // MoveToLevelWithOnOff / level coupling.
+        if (!onOff && MatterIsOffTransitionActive())
+        {
+            bool currentlyOn = true;
+            if (OnOff::Attributes::OnOff::Get(endpoint, &currentlyOn) == Status::Success && !currentlyOn)
+            {
+                ChipLogProgress(Zcl, "Skip on/off OFF due to level change (already off)");
+                return;
+            }
+        }
         ChipLogProgress(Zcl, "Setting on/off to %s due to level change", onOff ? "ON" : "OFF");
         OnOffServer::Instance().setOnOffValue(endpoint, (onOff ? OnOff::Commands::On::Id : OnOff::Commands::Off::Id), true);
     }

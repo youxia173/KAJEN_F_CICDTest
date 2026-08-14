@@ -126,6 +126,8 @@ extern "C" void MatterSyncPowerOnAttributesFromMemory();
 extern "C" uint8_t MatterGetIsColorTempMode();
 extern "C" uint16_t MatterGetRuntimeColorTempMireds();
 extern "C" void MatterSetOffTransitionActive(uint8_t active);
+extern "C" uint8_t MatterIsOffTransitionActive(void);
+extern "C" uint8_t MatterGetMemOnOff(void);
 extern "C" void MatterSetButtonDimmingActive(uint8_t active);
 extern "C" void MatterSetSm15135eStandbyAllowed(uint8_t allowed);
 extern "C" void MatterApplyButtonDimmingQ16(int32_t levelQ16, uint8_t levelMin, uint8_t levelMax);
@@ -1023,15 +1025,37 @@ static void ApplyButtonPresetAtIndex(size_t presetIndex, uint8_t level254)
                                       p.ctMireds != 0u ? CtPresetReportMireds(p) : 0u);
     MatterSetButtonPresetSuppressColorCallbacks(8);
     MatterSetButtonPresetTransaction(1);
-    chip::DeviceLayer::PlatformMgr().LockChipStack();
-    const ColorControl::ColorModeEnum colorMode = SyncMatterAttributesForPreset(sPresetIndex);
-    OnOff::Attributes::OnOff::Set(LIGHT_ENDPOINT, true);
-    ReportLightStateAttributes(colorMode, true);
-    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
-    MatterSetButtonPresetTransaction(0);
 
+    // PWM first so a stuck ChipStack cannot leave the button dead.
     sButtonPresetLatched = true;
     MatterSetButtonPresetPwmWithFade(p.wPermille, p.rPermille, p.gPermille, p.bPermille, level254);
+
+    if (chip::DeviceLayer::PlatformMgr().TryLockChipStack())
+    {
+        const ColorControl::ColorModeEnum colorMode = SyncMatterAttributesForPreset(sPresetIndex);
+        OnOff::Attributes::OnOff::Set(LIGHT_ENDPOINT, true);
+        ReportLightStateAttributes(colorMode, true);
+        chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+        MatterSetButtonPresetTransaction(0);
+    }
+    else
+    {
+        ChipLogError(Zcl, "[DIM][BTN] preset PWM applied; attr sync deferred (ChipStack busy)");
+        MatterSetButtonPresetTransaction(0);
+        (void) chip::DeviceLayer::PlatformMgr().ScheduleWork(
+            [](intptr_t arg) {
+                const size_t idx = static_cast<size_t>(arg);
+                if (idx >= kPresetCount)
+                {
+                    return;
+                }
+                const ColorControl::ColorModeEnum colorMode = SyncMatterAttributesForPreset(idx);
+                OnOff::Attributes::OnOff::Set(LIGHT_ENDPOINT, true);
+                ReportLightStateAttributes(colorMode, true);
+            },
+            static_cast<intptr_t>(sPresetIndex));
+    }
+
     ChipLogError(Zcl, "[DIM] button preset=%u base_permille=%u,%u,%u,%u level254=%u matter_mode=%u hue=%u",
                  static_cast<unsigned>(sPresetIndex + 1),
                  static_cast<unsigned>(p.wPermille), static_cast<unsigned>(p.rPermille),
@@ -1956,8 +1980,11 @@ void AppTask::OnButtonPressed()
 {
     if (sButtonPressed)
     {
+        ChipLogError(Zcl, "[DIM][BTN] press ignored (already pressed)");
         return;
     }
+
+    ChipLogError(Zcl, "[DIM][BTN] press");
 
     if (sIdentifyActive || sEffectMode == EffectMode::Identify)
     {
@@ -2013,6 +2040,8 @@ void AppTask::OnButtonPressed()
 
 void AppTask::OnButtonReleased()
 {
+    ChipLogError(Zcl, "[DIM][BTN] release longMs=%u dim=%u", static_cast<unsigned>(sLongPressMs),
+                 static_cast<unsigned>(sDimmingActive ? 1u : 0u));
     sButtonPressed = false;
     osTimerStop(sLongPressTimer);
     MatterSetButtonDimmingActive(0);
@@ -2144,6 +2173,9 @@ void AppTask::OnButtonReleased()
 
 void AppTask::HandleSingleClick()
 {
+    // Must go through OnOff attribute Set so PostAttributeChange updates PWM + LightMgr
+    // the same way as App commands. Local-only toggle (suppress attr HW) left LightMgr
+    // / off-fade flags desynced and made App On/Off appear dead.
     bool onoff = true;
     chip::DeviceLayer::PlatformMgr().LockChipStack();
     OnOff::Attributes::OnOff::Get(LIGHT_ENDPOINT, &onoff);
@@ -2159,13 +2191,10 @@ void AppTask::HandleSingleClick()
     }
     else
     {
-        // 开灯后第一次长按固定从调暗开始（不等 OnOff 回调，避免部分路径不触发）。
-        ResetDimmingDirectionAfterTurnOn();
         MatterSetOffTransitionActive(0);
         MatterSyncLevelBeforeOn();
 
         // 未配网且尚未双击切过预设：短按开灯用纯 W（预设1），与打断呼吸一致。
-        // 否则会走 Matter CT/RGB 路径，出现 RGB 混色而不是呼吸时的白光。
         if (!BaseApplication::sIsProvisioned && !sButtonPresetLatched)
         {
             uint8_t level254 = kLevelMax;

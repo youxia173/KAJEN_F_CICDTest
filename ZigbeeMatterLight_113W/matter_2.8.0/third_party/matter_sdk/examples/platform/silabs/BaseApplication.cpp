@@ -978,7 +978,8 @@ void BaseApplication::PostEvent(const AppEvent * aEvent)
     {
         if (osMessageQueuePut(sAppEventQueue, aEvent, osPriorityNormal, 0) != osOK)
         {
-            ChipLogError(AppServer, "Failed to post event to app task event queue");
+            ChipLogError(AppServer, "Failed to post event to app task event queue (space=%u)",
+                         static_cast<unsigned>(osMessageQueueGetSpace(sAppEventQueue)));
         }
     }
     else

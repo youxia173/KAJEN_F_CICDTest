@@ -74,13 +74,15 @@ static void sm15135e_bus_mutex_init(void)
     }
 }
 
-static void sm15135e_bus_lock(void)
+static bool sm15135e_bus_lock(void)
 {
     sm15135e_bus_mutex_init();
     if (sm15135e_bus_mutex != nullptr)
     {
-        (void) osMutexAcquire(sm15135e_bus_mutex, osWaitForever);
+        // Bound wait: forever here + hung SPI elsewhere = AppTask/button dead while Matter reports live.
+        return (osMutexAcquire(sm15135e_bus_mutex, 50) == osOK);
     }
+    return true;
 }
 
 static void sm15135e_bus_unlock(void)
@@ -118,7 +120,10 @@ static bool sm15135e_spi_transmit(const void * buffer, size_t count)
         {
             return false;
         }
-        osDelay(1);
+        // Never osDelay while holding sm15135e_bus_mutex (caller holds it): that stalls
+        // AppTask/fade and can look like a freeze with Matter timers still alive.
+        // Yield briefly without sleeping under the mutex.
+        osThreadYield();
     }
 
     return false;
@@ -175,7 +180,10 @@ static void sm15135e_encode_frame(const sm15135e_pixel_t * p, uint8_t * out_buf)
 
 void sm15135e_send_reset(void)
 {
-    sm15135e_bus_lock();
+    if (!sm15135e_bus_lock())
+    {
+        return;
+    }
     (void) sm15135e_spi_transmit(sm15135e_reset_buf, sizeof(sm15135e_reset_buf));
     sm15135e_bus_unlock();
 }
@@ -207,7 +215,10 @@ void sm15135e_enter_standby(void)
     sm15135e_fill_default(&standby_pixel);
     standby_pixel.standby = SM15135E_STANDBY_SLEEP;
 
-    sm15135e_bus_lock();
+    if (!sm15135e_bus_lock())
+    {
+        return;
+    }
     sm15135e_encode_frame(&standby_pixel, sm15135e_frame_buf);
     const bool frameOk = sm15135e_spi_transmit(sm15135e_frame_buf, sizeof(sm15135e_frame_buf));
     if (frameOk)
@@ -225,7 +236,10 @@ void sm15135e_send_frame(const sm15135e_pixel_t * p)
         return;
     }
 
-    sm15135e_bus_lock();
+    if (!sm15135e_bus_lock())
+    {
+        return;
+    }
     sm15135e_encode_frame(p, sm15135e_frame_buf);
     (void) sm15135e_spi_transmit(sm15135e_frame_buf, sizeof(sm15135e_frame_buf));
     sm15135e_bus_unlock();
@@ -238,7 +252,10 @@ bool sm15135e_transmit_pixel(const sm15135e_pixel_t * p)
         return false;
     }
 
-    sm15135e_bus_lock();
+    if (!sm15135e_bus_lock())
+    {
+        return false;
+    }
     sm15135e_encode_frame(p, sm15135e_frame_buf);
 
     bool wakeOk = true;
