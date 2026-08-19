@@ -1,6 +1,5 @@
-# IKEA NonFuncReq / DevOps: manual QA pipeline (sequential, no Release step).
-# Saves private-repo minutes: auto push/PR triggers stay disabled.
-# For tag releases use Release workflow (runs the same template + release-package).
+# IKEA NonFuncReq / DevOps: sequential QA pipeline (no Release step).
+# Public test repo: auto-runs on push/PR to main. Tag releases use release.yml.
 name: CI
 
 on:
@@ -12,10 +11,10 @@ on:
         default: "false"
         type: choice
         options: ["false", "true"]
-  # push:
-  #   branches: [main, master, develop]
-  # pull_request:
-  #   branches: [main, master, develop]
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}

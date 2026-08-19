@@ -18,7 +18,7 @@ This repository follows Inter IKEA Homesmart DevOps expectations:
 | Cloud firmware compile in CI | **Done** (`ENABLE_FIRMWARE_BUILD=true`) |
 | Sequential release pipeline | **Done** (CodeAnalysis → UnitTest → Build → Release) |
 | Tag → unsigned zip + GitHub Release | **Done** (`{project_id}-{version}-unsigned.zip`) |
-| Push/PR auto CI | **Off on purpose** (save private-repo Actions minutes) |
+| Push/PR auto CI | **On** (public test repo; push to main) |
 | Homesmart OTA API | **Pending** IKEA credentials / API |
 | Mirror to Inter IKEA GitHub | **Pending** delivery |
 
@@ -40,9 +40,11 @@ Implementation: `.github/workflows/release_template.yaml` (reused by Release + m
 | 3 Build | GHCR `docker run … build` |
 | 4 Release | `scripts/release/package_release.sh` → GitHub Release |
 
-**Manual CI** (Actions → **CI**): runs stages 1–3 only (no Release). Needs `ENABLE_FIRMWARE_BUILD=true` for stage 3.
+**Manual CI** (Actions → **CI**): runs stages 1–3 only. Also runs automatically on **push/PR to main**.
 
 **Release** (push tag `v*`): runs stages 1–4. Does **not** depend on a separate prior CI run.
+
+GHCR image lookup order for firmware-build: `GHCR_FIRMWARE_IMAGE` variable → `ghcr.io/<owner>/kajen-sixg301:sdk-2025.12.1` → `ghcr.io/barryjim/kajen-sixg301:sdk-2025.12.1`.
 
 ## Release package layout
 
@@ -106,7 +108,7 @@ bash scripts/release/package_release.sh 0.3.6 release_out
 
 | Workflow | Trigger | Stages |
 |---|---|---|
-| `ci.yml` | Manual | 1 → 2 → 3 |
+| `ci.yml` | Push/PR main, manual | 1 → 2 → 3 |
 | `release.yml` | Tag `v*` / manual | 1 → 2 → 3 → 4 (4 only on tag or manual + create_release) |
 | `release_template.yaml` | `workflow_call` | Shared template |
 | `docker-image.yml` | Manual | Build/push GHCR image |
