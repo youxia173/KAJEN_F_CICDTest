@@ -6,7 +6,7 @@ This repository follows Inter IKEA Homesmart DevOps expectations:
 - CI via GitHub Actions (pipeline YAML in repo)
 - Build logic lives in `scripts/` (pipeline steps stay short)
 - Local reproduction of CI: `bash scripts/ci_local.sh`
-- Release tags `vX.Y.Z`; artifacts + release notes on GitHub Releases
+- Release tags `vX.Y.Z`; unsigned zip + release notes on GitHub Releases
 - Secrets (OTA credentials) in GitHub Secrets — never in source
 - Firmware build env: full SiSDK image on GHCR (`kajen-sixg301:sdk-2025.12.1`)
 
@@ -16,39 +16,68 @@ This repository follows Inter IKEA Homesmart DevOps expectations:
 |---|---|
 | GHCR full firmware image | **Done** (manual Build Docker image workflow) |
 | Cloud firmware compile in CI | **Done** (`ENABLE_FIRMWARE_BUILD=true`) |
-| Tag → GitHub Release + versioned `.s37` | **Done** |
+| Sequential release pipeline | **Done** (CodeAnalysis → UnitTest → Build → Release) |
+| Tag → unsigned zip + GitHub Release | **Done** (`{project_id}-{version}-unsigned.zip`) |
 | Push/PR auto CI | **Off on purpose** (save private-repo Actions minutes) |
 | Homesmart OTA API | **Pending** IKEA credentials / API |
 | Mirror to Inter IKEA GitHub | **Pending** delivery |
 
-## What runs today
+## Pipeline (sequential)
 
-| Stage | Trigger | Script / workflow |
-|---|---|---|
-| cpplint | **manual** Actions → CI | `scripts/linter/linter.sh` |
-| cppcheck | **manual** | `scripts/cppcheck/runner.sh` |
-| unittest | **manual** (if test dirs exist) | `scripts/unittest/runner.sh` |
-| firmware build | **manual** CI when `ENABLE_FIRMWARE_BUILD=true` | GHCR `docker run … build` |
-| docker image (GHCR) | **manual** Actions → Build Docker image (GHCR) | `.github/workflows/docker-image.yml` |
-| release package | push tag `v*` (or workflow_dispatch) | package + GitHub Release |
-| Homesmart OTA | release + `ENABLE_OTA_UPLOAD=true` | placeholder until API ready |
+Tag push `v*` runs **all four stages** in one workflow (not parallel, not release-only):
 
-Auto `push` / `pull_request` triggers in `ci.yml` and `docker-image.yml` stay **commented out** to conserve free Actions minutes. Re-enable later when quota allows.
+```
+code-analysis  →  unit-test  →  firmware-build  →  release-package
+     (1)              (2)            (3)                 (4)
+```
 
-## Recommended manual flow
+Implementation: `.github/workflows/release_template.yaml` (reused by Release + manual CI).
 
-1. **Quality + cloud build** (when you need it): Actions → **CI** → Run workflow  
-   - Needs variable `ENABLE_FIRMWARE_BUILD=true`  
-   - Uploads artifact `firmware-<sha>` (`.s37` / `.gbl`)
-2. **Release**: only bump forward (e.g. after `v0.3.5` use **`v0.3.6`**, never re-tag older numbers)
+| Stage | Script / action |
+|---|---|
+| 1 Code analysis | `scripts/linter/*`, `scripts/cppcheck/*` → `code_quality_report.tar.gz` |
+| 2 Unit test | `scripts/unittest/runner.sh` (skipped if no test dirs) |
+| 3 Build | GHCR `docker run … build` |
+| 4 Release | `scripts/release/package_release.sh` → GitHub Release |
+
+**Manual CI** (Actions → **CI**): runs stages 1–3 only (no Release). Needs `ENABLE_FIRMWARE_BUILD=true` for stage 3.
+
+**Release** (push tag `v*`): runs stages 1–4. Does **not** depend on a separate prior CI run.
+
+## Release package layout
+
+Configured in `scripts/release/project.env`:
+
+```bash
+IKEA_PROJECT_ID="4476-20480"   # placeholder until IKEA assigns final ID
+```
+
+Output zip: **`4476-20480-0.3.6-unsigned.zip`** (example for tag `v0.3.6`).
+
+| File inside zip | Purpose |
+|---|---|
+| `Matter-Bootloader_113W.s37` | Bootloader — flash separately |
+| `ZigbeeMatterLight_113W.s37` | Application — flash separately |
+| `ZigbeeMatterLightSolution_SixG301M113W-full.s37` | Optional combined image (if build produced it) |
+
+OTA artifacts are **not** included yet (tutorial TBD).
+
+Legacy single-file naming (`silabs_MatterAndZigger_SixG301_V*.s37`) is kept in `scripts/release/package_firmware.sh` for local convenience only.
+
+## Recommended flow (public test repo first)
+
+1. Set repo variable **`ENABLE_FIRMWARE_BUILD=true`**
+2. Ensure GHCR image exists (`Build Docker image (GHCR)` workflow or `GHCR_FIRMWARE_IMAGE`)
+3. **Manual QA** (optional): Actions → **CI** → Run workflow
+4. **Release** (only bump forward):
 
 ```bash
 git checkout main && git pull
-git tag v0.3.6
-git -c http.proxy= -c https.proxy= push origin v0.3.6
+git tag v0.3.7
+git push origin v0.3.7
 ```
 
-3. Release prefers the **CI-built** `firmware-<commit>` artifact for that tag’s commit; if missing, falls back to `artifact/...-full.s37` in the repo.
+5. Check GitHub Release for `{project_id}-{version}-unsigned.zip`
 
 ## Local CI
 
@@ -56,16 +85,16 @@ git -c http.proxy= -c https.proxy= push origin v0.3.6
 bash scripts/ci_local.sh              # lint + cppcheck
 bash scripts/ci_local.sh --strict
 bash scripts/ci_local.sh --with-build # needs local SiSDK / Studio
-bash scripts/ci_local.sh --build-only
+bash scripts/release/package_release.sh 0.3.6 release_out
 ```
 
 ## Repo variables / secrets
 
 **Variables (Settings → Variables):**
 
-- `ENABLE_FIRMWARE_BUILD=true` — run firmware job in manual CI (GHCR image already available)
+- `ENABLE_FIRMWARE_BUILD=true` — run firmware job in manual CI
 - `GHCR_FIRMWARE_IMAGE` — optional; default `ghcr.io/<owner>/kajen-sixg301:sdk-2025.12.1`
-- `CI_STRICT_LINT=true` — make cpplint fail the job
+- `CI_STRICT_LINT=true` — make cpplint fail code-analysis
 - `ENABLE_OTA_UPLOAD=true` — only after OTA secrets + real API are ready
 
 **Secrets (Settings → Secrets):**
@@ -73,15 +102,14 @@ bash scripts/ci_local.sh --build-only
 - `IKEA_OTA_API_URL` — Homesmart OTA endpoint (when provided)
 - `IKEA_OTA_TOKEN` — OTA credential
 
-## Still to do (IKEA full compliance)
+## Workflows
 
-1. ~~Package Silicon Labs build env as Docker / GHCR~~
-2. ~~Cloud firmware CI via GHCR~~
-3. Mirror this repo to Inter IKEA GitHub on delivery
-4. Wire official Homesmart OTA upload API in `release.yml`
-5. Add host unit tests under app `*/test/` + `kt_components` if required
-6. IaC for any self-hosted runners (Terraform/Ansible) if IKEA requires them
-7. (Optional) Re-enable auto CI / GHCR on push when Actions minutes allow
+| Workflow | Trigger | Stages |
+|---|---|---|
+| `ci.yml` | Manual | 1 → 2 → 3 |
+| `release.yml` | Tag `v*` / manual | 1 → 2 → 3 → 4 (4 only on tag or manual + create_release) |
+| `release_template.yaml` | `workflow_call` | Shared template |
+| `docker-image.yml` | Manual | Build/push GHCR image |
 
 ## Docker (firmware build env)
 
@@ -98,7 +126,7 @@ docker run --rm --entrypoint /workspace/docker/entrypoint.sh \
 
 - `scripts/linter`, `scripts/cppcheck`, `scripts/codeanalysis`
 - `scripts/unittest`, `scripts/format`
-- `scripts/fw_packaging`, `scripts/release`
+- `scripts/release/package_release.sh` (Release zip), `scripts/release/package_firmware.sh` (legacy single .s37)
 - `scripts/flash.sh` (device flash; not used in cloud CI)
 
 `scripts/ci_local.sh` is the shared entry for local checks.

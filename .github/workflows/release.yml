@@ -1,5 +1,5 @@
-# IKEA CD: tag releases, package artifacts, publish notes.
-# OTA upload to Homesmart is gated on secrets + API (TODO when credentials available).
+# IKEA CD: tag push runs full pipeline CodeAnalysis → UnitTest → Build → Release.
+# OTA upload to Homesmart is gated on ENABLE_OTA_UPLOAD (placeholder until API ready).
 name: Release
 
 on:
@@ -11,20 +11,44 @@ on:
       version:
         description: "Release version (e.g. 0.3.6) without leading v"
         required: true
+      create_release:
+        description: "Create GitHub Release after build (manual test)"
+        required: false
+        default: false
+        type: boolean
+      strict_lint:
+        description: "Fail if cpplint reports findings"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
   actions: read
+  packages: read
 
 jobs:
-  package:
-    name: package-release
+  pipeline:
+    uses: ./.github/workflows/release_template.yaml
+    with:
+      ref: ${{ github.ref }}
+      version: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || '' }}
+      run_release: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == true) }}
+      strict_lint: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.strict_lint == true }}
+      enable_firmware_build: true
+
+  ota-upload:
+    name: homesmart-ota
+    needs: pipeline
     runs-on: ubuntu-latest
+    if: ${{ vars.ENABLE_OTA_UPLOAD == 'true' && (github.event_name == 'push' || github.event.inputs.create_release) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Resolve version
         id: ver
@@ -35,96 +59,8 @@ jobs:
             VER="${GITHUB_REF_NAME#v}"
           fi
           VER="${VER#v}"
-          echo "version=${VER}" >> "$GITHUB_OUTPUT"
-          echo "tag=v${VER}" >> "$GITHUB_OUTPUT"
-          echo "fw=silabs_MatterAndZigger_SixG301_V${VER}.s37" >> "$GITHUB_OUTPUT"
-
-      # Prefer firmware built by a successful manual CI run on this commit.
-      - name: Prefer CI firmware artifact for this commit
-        id: ci_fw
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          mkdir -p artifact
-          SHA="${{ github.sha }}"
-          ART_NAME="firmware-${SHA}"
-          echo "Looking for CI artifact ${ART_NAME} on ${SHA}..."
-          mapfile -t RUN_IDS < <(
-            gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SHA}&status=completed&per_page=30" \
-              --jq '.workflow_runs[] | select(.name=="CI" and .conclusion=="success") | .id'
-          )
-          got=0
-          for id in "${RUN_IDS[@]:-}"; do
-            echo "Trying CI run ${id}..."
-            if gh run download "${id}" -n "${ART_NAME}" -D artifact 2>/dev/null; then
-              got=1
-              echo "Downloaded ${ART_NAME} from run ${id}"
-              break
-            fi
-          done
-          if [[ "${got}" -eq 1 ]]; then
-            # download may nest files; flatten .s37 into artifact/
-            found="$(find artifact -type f -name 'ZigbeeMatterLightSolution_SixG301M113W-full.s37' | head -1 || true)"
-            if [[ -n "${found}" && "${found}" != "artifact/ZigbeeMatterLightSolution_SixG301M113W-full.s37" ]]; then
-              mv -f "${found}" artifact/ZigbeeMatterLightSolution_SixG301M113W-full.s37
-            fi
-            echo "source=ci" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning title=No CI firmware artifact::No successful CI artifact ${ART_NAME}. Falling back to repo artifact/ if present. Tip: run CI on this commit before tagging."
-            echo "source=repo" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Package versioned firmware only
-        run: |
-          mkdir -p release_out
-          bash scripts/release/package_firmware.sh "${{ steps.ver.outputs.version }}" release_out
-
-      - name: Write release notes stub
-        run: |
-          cat > release_out/RELEASE_NOTES.md <<EOF
-          # KAJEN_F / SixG301 release ${{ steps.ver.outputs.version }}
-
-          - Tag: ${{ steps.ver.outputs.tag }}
-          - Commit: ${{ github.sha }}
-          - Firmware: ${{ steps.ver.outputs.fw }}
-          - Firmware source: ${{ steps.ci_fw.outputs.source }} (ci = GHCR CI artifact; repo = committed artifact/)
-
-          ## OTA
-          Homesmart OTA upload runs when secrets \`IKEA_OTA_*\` are configured
-          (see docs/CI_CD.md).
-          EOF
-
-      - name: Upload release folder
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-${{ steps.ver.outputs.version }}
-          path: |
-            release_out/${{ steps.ver.outputs.fw }}
-            release_out/RELEASE_NOTES.md
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.ver.outputs.tag }}
-          name: ${{ steps.ver.outputs.tag }}
-          body_path: release_out/RELEASE_NOTES.md
-          files: |
-            release_out/${{ steps.ver.outputs.fw }}
-          fail_on_unmatched_files: true
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  ota-upload:
-    name: homesmart-ota
-    needs: package
-    runs-on: ubuntu-latest
-    # Enable with repo variable ENABLE_OTA_UPLOAD=true after secrets are configured.
-    if: ${{ vars.ENABLE_OTA_UPLOAD == 'true' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+          source scripts/release/project.env
+          echo "zip=${IKEA_PROJECT_ID}-${VER}-unsigned.zip" >> "$GITHUB_OUTPUT"
 
       - name: Download release package
         uses: actions/download-artifact@v4
@@ -142,12 +78,8 @@ jobs:
             echo "ERROR: set secrets IKEA_OTA_API_URL and IKEA_OTA_TOKEN" >&2
             exit 1
           fi
-          FW="$(ls release_out/silabs_MatterAndZigger_SixG301_V*.s37 | head -1)"
+          FW="$(ls release_out/${{ steps.ver.outputs.zip }} | head -1)"
           echo "TODO: call Homesmart OTA API with ${FW}"
           echo "API=${IKEA_OTA_API_URL}"
           ls -la release_out
-          # Example (replace with official API when provided by IKEA):
-          # curl -fsSL -X POST "$IKEA_OTA_API_URL" \
-          #   -H "Authorization: Bearer $IKEA_OTA_TOKEN" \
-          #   -F "file=@${FW}"
           exit 0

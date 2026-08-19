@@ -1,0 +1,280 @@
+# Reusable sequential pipeline: CodeAnalysis → UnitTest → Build → Release.
+# Called by release.yml (tag / manual) and ci.yml (manual QA only).
+name: Release-Template
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref to checkout"
+        required: false
+        type: string
+        default: ""
+      version:
+        description: "Release version without leading v (for packaging)"
+        required: false
+        type: string
+        default: ""
+      run_release:
+        description: "Run release-package job (GitHub Release + zip)"
+        required: false
+        type: boolean
+        default: false
+      strict_lint:
+        description: "Fail code-analysis if cpplint reports findings"
+        required: false
+        type: boolean
+        default: false
+      enable_firmware_build:
+        description: "Run firmware-build job (requires GHCR image)"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  code-analysis:
+    name: code-analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git curl libpcre3-dev python3 python3-pip
+
+      - name: Run code analysis
+        env:
+          CI_STRICT_LINT: ${{ inputs.strict_lint == true && 'true' || vars.CI_STRICT_LINT || 'false' }}
+        run: |
+          set -euo pipefail
+          bash scripts/linter/setup.sh
+          if [[ "${CI_STRICT_LINT:-}" == "true" ]]; then
+            bash scripts/linter/linter.sh -p
+          else
+            bash scripts/linter/linter.sh -p || {
+              echo "::warning title=cpplint findings::Non-strict mode; continuing. Set CI_STRICT_LINT=true or strict_lint input to fail."
+            }
+          fi
+          bash scripts/cppcheck/setup.sh
+          bash scripts/cppcheck/runner.sh
+          tar -czf code_quality_report.tar.gz code_quality_report
+
+      - name: Upload code quality report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: code_quality_report
+          path: code_quality_report.tar.gz
+          if-no-files-found: warn
+
+  unit-test:
+    name: unit-test
+    needs: code-analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
+
+      - name: Decide whether to run host unit tests
+        id: decide
+        shell: bash
+        run: |
+          if [ -d "kt_components" ] || [ -d "unit_test" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install deps
+        if: steps.decide.outputs.run == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config libcmocka-dev
+
+      - name: Run unit tests
+        if: steps.decide.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p unit_test_report
+          bash scripts/unittest/runner.sh | tee unit_test_report/unit_test_report.txt
+          if [[ -f scripts/unittest/codecoverage.sh ]]; then
+            bash scripts/unittest/codecoverage.sh -w || true
+          fi
+          tar -czf unit_test_report.tar.gz unit_test_report
+
+      - name: Upload unit test report
+        if: steps.decide.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit_test_report
+          path: unit_test_report.tar.gz
+          if-no-files-found: warn
+
+      - name: Skip unit tests (no test tree)
+        if: steps.decide.outputs.run != 'true'
+        run: echo "No kt_components/ or unit_test/ — skipping host unit tests."
+
+  firmware-build:
+    name: firmware-build
+    needs: unit-test
+    if: ${{ inputs.enable_firmware_build }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
+
+      - name: Resolve firmware Docker image
+        id: image
+        shell: bash
+        run: |
+          owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          default="ghcr.io/${owner}/kajen-sixg301:sdk-2025.12.1"
+          image="${{ vars.GHCR_FIRMWARE_IMAGE }}"
+          if [ -z "${image}" ]; then
+            image="${default}"
+          fi
+          echo "ref=${image}" >> "$GITHUB_OUTPUT"
+          echo "Using image: ${image}"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull firmware build image
+        id: pull
+        shell: bash
+        run: |
+          ref="${{ steps.image.outputs.ref }}"
+          if docker pull "${ref}"; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::error title=GHCR image missing::Could not pull ${ref}. Run 'Build Docker image (GHCR)' first."
+            exit 1
+          fi
+
+      - name: Build firmware in container
+        if: steps.pull.outputs.ready == 'true'
+        run: |
+          sudo chown -R 1000:1000 "${{ github.workspace }}"
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            "${{ steps.image.outputs.ref }}" \
+            build
+
+      - name: Upload firmware artifacts
+        if: steps.pull.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-build
+          path: |
+            Matter-Bootloader_113W/artifact/Matter-Bootloader_113W.s37
+            Matter-Bootloader_113W/artifact/Matter-Bootloader_113W-crc.s37
+            ZigbeeMatterLight_113W/artifact/ZigbeeMatterLight_113W.s37
+            artifact/ZigbeeMatterLightSolution_SixG301M113W-full.s37
+            artifact/*.gbl
+          if-no-files-found: error
+
+  release-package:
+    name: release-package
+    needs: firmware-build
+    if: ${{ inputs.run_release }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Download firmware artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware-build
+          path: .
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${{ inputs.version }}" ]]; then
+            VER="${{ inputs.version }}"
+          elif [[ "${GITHUB_REF_NAME}" == v* ]]; then
+            VER="${GITHUB_REF_NAME#v}"
+          else
+            echo "ERROR: version not provided and ref is not a v* tag" >&2
+            exit 1
+          fi
+          VER="${VER#v}"
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VER}" >> "$GITHUB_OUTPUT"
+          # shellcheck disable=SC1091
+          source scripts/release/project.env
+          echo "zip=${IKEA_PROJECT_ID}-${VER}-unsigned.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Package unsigned release zip
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          bash scripts/release/package_release.sh "${{ steps.ver.outputs.version }}" release_out
+          # Inject commit into release notes
+          sed -i "s/\${GITHUB_SHA:-local}/${{ github.sha }}/" release_out/RELEASE_NOTES.md
+
+      - name: Download quality reports
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: code_quality_report|unit_test_report
+          path: release_out/extra
+          merge-multiple: true
+
+      - name: Upload release folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ steps.ver.outputs.version }}
+          path: |
+            release_out/${{ steps.ver.outputs.zip }}
+            release_out/RELEASE_NOTES.md
+            release_out/extra/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          body_path: release_out/RELEASE_NOTES.md
+          files: |
+            release_out/${{ steps.ver.outputs.zip }}
+            release_out/extra/code_quality_report.tar.gz
+            release_out/extra/unit_test_report.tar.gz
+          fail_on_unmatched_files: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

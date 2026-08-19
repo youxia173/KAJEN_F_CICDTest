@@ -1,9 +1,6 @@
-# IKEA NonFuncReq / DevOps: CI pipeline in version control.
-# Pipeline steps stay short; logic lives in scripts/ (see scripts/ci_local.sh).
-#
-# Auto CI on push/PR is intentionally disabled to save private-repo Actions minutes.
-# Run manually: Actions → CI → Run workflow.
-# Re-enable later by uncommenting push / pull_request below.
+# IKEA NonFuncReq / DevOps: manual QA pipeline (sequential, no Release step).
+# Saves private-repo minutes: auto push/PR triggers stay disabled.
+# For tag releases use Release workflow (runs the same template + release-package).
 name: CI
 
 on:
@@ -24,153 +21,14 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
-  lint:
-    name: cpplint
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install cpplint
-        run: bash scripts/linter/setup.sh
-
-      - name: Run cpplint
-        id: lint
-        continue-on-error: ${{ github.event.inputs.strict_lint != 'true' && vars.CI_STRICT_LINT != 'true' }}
-        run: bash scripts/linter/linter.sh -p
-
-      - name: Upload cpplint report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cpplint-report
-          path: code_quality_report/cpplint/
-          if-no-files-found: warn
-
-  cppcheck:
-    name: cppcheck
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential git curl libpcre3-dev python3 python3-pip
-
-      - name: Setup cppcheck
-        run: bash scripts/cppcheck/setup.sh
-
-      - name: Run cppcheck
-        run: bash scripts/cppcheck/runner.sh
-
-      - name: Upload cppcheck report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cppcheck-report
-          path: code_quality_report/cppcheck/
-          if-no-files-found: warn
-
-  unittest:
-    name: unittest
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Decide whether to run host unit tests
-        id: decide
-        shell: bash
-        run: |
-          if [ -d "kt_components" ] || [ -d "unit_test" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Install deps
-        if: steps.decide.outputs.run == 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake pkg-config libcmocka-dev
-
-      - name: Run unit tests
-        if: steps.decide.outputs.run == 'true'
-        run: bash scripts/unittest/runner.sh
-
-  # Firmware build: requires GHCR image (built by docker-image.yml).
-  # Keep ENABLE_FIRMWARE_BUILD unset/false until "Build Docker image (GHCR)" succeeds once.
-  firmware-build:
-    name: firmware-build
-    runs-on: ubuntu-latest
-    if: ${{ vars.ENABLE_FIRMWARE_BUILD == 'true' }}
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Resolve firmware Docker image
-        id: image
-        shell: bash
-        run: |
-          owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
-          default="ghcr.io/${owner}/kajen-sixg301:sdk-2025.12.1"
-          image="${{ vars.GHCR_FIRMWARE_IMAGE }}"
-          if [ -z "${image}" ]; then
-            image="${default}"
-          fi
-          echo "ref=${image}" >> "$GITHUB_OUTPUT"
-          echo "Using image: ${image}"
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull firmware build image
-        id: pull
-        shell: bash
-        run: |
-          ref="${{ steps.image.outputs.ref }}"
-          if docker pull "${ref}"; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::warning title=GHCR image missing::Could not pull ${ref} (manifest unknown?). Run workflow 'Build Docker image (GHCR)' successfully first, then re-run CI."
-          fi
-
-      - name: Build firmware in container
-        if: steps.pull.outputs.ready == 'true'
-        run: |
-          # Image runs as hans (uid/gid 1000). GHA checkout is owned by runner
-          # (usually 1001), so without this mkdir build/ fails with Permission denied.
-          sudo chown -R 1000:1000 "${{ github.workspace }}"
-          docker run --rm \
-            -v "${{ github.workspace }}:/workspace" \
-            -w /workspace \
-            "${{ steps.image.outputs.ref }}" \
-            build
-
-      - name: Upload firmware artifacts
-        if: steps.pull.outputs.ready == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: firmware-${{ github.sha }}
-          path: |
-            artifact/ZigbeeMatterLightSolution_SixG301M113W-full.s37
-            artifact/*.gbl
-          if-no-files-found: warn
+  pipeline:
+    uses: ./.github/workflows/release_template.yaml
+    with:
+      strict_lint: ${{ github.event.inputs.strict_lint == 'true' }}
+      run_release: false
+      enable_firmware_build: ${{ vars.ENABLE_FIRMWARE_BUILD == 'true' }}

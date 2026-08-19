@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Rename build output to the delivery name used for Releases / OTA.
+# Rename combined full.s37 for local flash / legacy use.
+# GitHub Releases use scripts/release/package_release.sh (unsigned zip).
 # Usage:
 #   bash scripts/release/package_firmware.sh 0.3.3
 #   bash scripts/release/package_firmware.sh 0.3.3 /path/to/out_dir
