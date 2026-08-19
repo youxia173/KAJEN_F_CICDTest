@@ -1,5 +1,5 @@
-# Reusable sequential pipeline: CodeAnalysis → UnitTest → Build → Release.
-# Called by release.yml (tag / manual) and ci.yml (manual QA only).
+# Reusable sequential pipeline: CodeAnalysis → UnitTest → Build.
+# Release packaging lives in release.yml (needs contents: write).
 name: Release-Template
 
 on:
@@ -10,16 +10,6 @@ on:
         required: false
         type: string
         default: ""
-      version:
-        description: "Release version without leading v (for packaging)"
-        required: false
-        type: string
-        default: ""
-      run_release:
-        description: "Run release-package job (GitHub Release + zip)"
-        required: false
-        type: boolean
-        default: false
       strict_lint:
         description: "Fail code-analysis if cpplint reports findings"
         required: false
@@ -197,84 +187,3 @@ jobs:
             artifact/ZigbeeMatterLightSolution_SixG301M113W-full.s37
             artifact/*.gbl
           if-no-files-found: error
-
-  release-package:
-    name: release-package
-    needs: firmware-build
-    if: ${{ inputs.run_release }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
-          fetch-depth: 0
-
-      - name: Download firmware artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: firmware-build
-          path: .
-
-      - name: Resolve version
-        id: ver
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -n "${{ inputs.version }}" ]]; then
-            VER="${{ inputs.version }}"
-          elif [[ "${GITHUB_REF_NAME}" == v* ]]; then
-            VER="${GITHUB_REF_NAME#v}"
-          else
-            echo "ERROR: version not provided and ref is not a v* tag" >&2
-            exit 1
-          fi
-          VER="${VER#v}"
-          echo "version=${VER}" >> "$GITHUB_OUTPUT"
-          echo "tag=v${VER}" >> "$GITHUB_OUTPUT"
-          # shellcheck disable=SC1091
-          source scripts/release/project.env
-          echo "zip=${IKEA_PROJECT_ID}-${VER}-unsigned.zip" >> "$GITHUB_OUTPUT"
-
-      - name: Package unsigned release zip
-        env:
-          GITHUB_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          bash scripts/release/package_release.sh "${{ steps.ver.outputs.version }}" release_out
-          # Inject commit into release notes
-          sed -i "s/\${GITHUB_SHA:-local}/${{ github.sha }}/" release_out/RELEASE_NOTES.md
-
-      - name: Download quality reports
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          pattern: code_quality_report|unit_test_report
-          path: release_out/extra
-          merge-multiple: true
-
-      - name: Upload release folder
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-${{ steps.ver.outputs.version }}
-          path: |
-            release_out/${{ steps.ver.outputs.zip }}
-            release_out/RELEASE_NOTES.md
-            release_out/extra/
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.ver.outputs.tag }}
-          name: ${{ steps.ver.outputs.tag }}
-          body_path: release_out/RELEASE_NOTES.md
-          files: |
-            release_out/${{ steps.ver.outputs.zip }}
-            release_out/extra/code_quality_report.tar.gz
-            release_out/extra/unit_test_report.tar.gz
-          fail_on_unmatched_files: false
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

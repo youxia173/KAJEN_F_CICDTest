@@ -36,14 +36,90 @@ jobs:
     uses: ./.github/workflows/release_template.yaml
     with:
       ref: ${{ github.ref }}
-      version: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || '' }}
-      run_release: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == true) }}
       strict_lint: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.strict_lint == true }}
       enable_firmware_build: true
 
+  release-package:
+    name: release-package
+    needs: pipeline
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == true) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Download firmware artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware-build
+          path: .
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VER="${{ github.event.inputs.version }}"
+          elif [[ "${GITHUB_REF_NAME}" == v* ]]; then
+            VER="${GITHUB_REF_NAME#v}"
+          else
+            echo "ERROR: version not provided and ref is not a v* tag" >&2
+            exit 1
+          fi
+          VER="${VER#v}"
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VER}" >> "$GITHUB_OUTPUT"
+          # shellcheck disable=SC1091
+          source scripts/release/project.env
+          echo "zip=${IKEA_PROJECT_ID}-${VER}-unsigned.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Package unsigned release zip
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          bash scripts/release/package_release.sh "${{ steps.ver.outputs.version }}" release_out
+          sed -i "s/\${GITHUB_SHA:-local}/${{ github.sha }}/" release_out/RELEASE_NOTES.md
+
+      - name: Download quality reports
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: code_quality_report|unit_test_report
+          path: release_out/extra
+          merge-multiple: true
+
+      - name: Upload release folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ steps.ver.outputs.version }}
+          path: |
+            release_out/${{ steps.ver.outputs.zip }}
+            release_out/RELEASE_NOTES.md
+            release_out/extra/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          body_path: release_out/RELEASE_NOTES.md
+          files: |
+            release_out/${{ steps.ver.outputs.zip }}
+            release_out/extra/code_quality_report.tar.gz
+            release_out/extra/unit_test_report.tar.gz
+          fail_on_unmatched_files: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   ota-upload:
     name: homesmart-ota
-    needs: pipeline
+    needs: release-package
     runs-on: ubuntu-latest
     if: ${{ vars.ENABLE_OTA_UPLOAD == 'true' && (github.event_name == 'push' || github.event.inputs.create_release) }}
     steps:

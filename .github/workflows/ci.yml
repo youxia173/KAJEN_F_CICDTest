@@ -30,5 +30,4 @@ jobs:
     uses: ./.github/workflows/release_template.yaml
     with:
       strict_lint: ${{ github.event.inputs.strict_lint == 'true' }}
-      run_release: false
       enable_firmware_build: ${{ vars.ENABLE_FIRMWARE_BUILD == 'true' }}
