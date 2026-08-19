@@ -23,6 +23,9 @@ if [[ -z "${VER}" ]]; then
 fi
 VER="${VER#v}"
 
+mkdir -p "${OUT_DIR}"
+OUT_DIR="$(cd "${OUT_DIR}" && pwd)"
+
 # shellcheck source=/dev/null
 source "${ROOT}/scripts/release/project.env"
 
@@ -32,7 +35,6 @@ SRC_FULL="${ROOT}/artifact/ZigbeeMatterLightSolution_SixG301M113W-full.s37"
 
 ZIP_NAME="${IKEA_PROJECT_ID}-${VER}-unsigned.zip"
 STAGE="${OUT_DIR}/.pack_staging_${VER}"
-mkdir -p "${OUT_DIR}"
 rm -rf "${STAGE}"
 mkdir -p "${STAGE}"
 
