@@ -156,7 +156,7 @@ cat > "${OUT_DIR}/RELEASE_NOTES.md" <<EOF
 - OTA file VID/PID: ${OTA_VENDOR_ID:-0xFFF1} / ${OTA_PRODUCT_ID:-0x8005}
 - OTA version: ${VERSION_HEX} (${TAG_DISPLAY}.${FW_BUILD})
 - OTA window: min ${MIN_VERSION_HEX}, max ${MAX_VERSION_HEX}
-- Commit: \${GITHUB_SHA:-local}
+- Commit: ${GITHUB_SHA:-local}
 
 ## Files (inside zip, IKEA submission layout)
 

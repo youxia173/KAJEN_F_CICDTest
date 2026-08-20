@@ -123,7 +123,8 @@ jobs:
             -w /workspace \
             "${{ steps.pull.outputs.ref }}" \
             bash scripts/release/package_release.sh "${{ steps.ver.outputs.version }}" release_out
-          sed -i "s/\${GITHUB_SHA:-local}/${{ github.sha }}/" release_out/RELEASE_NOTES.md
+          # Container runs as UID 1000; restore ownership for later host steps.
+          sudo chown -R "$(id -u):$(id -g)" release_out
 
       - name: Download quality reports
         uses: actions/download-artifact@v4
