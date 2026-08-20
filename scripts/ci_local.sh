@@ -121,13 +121,14 @@ fi
 bash "${ROOT}/scripts/cppcheck/runner.sh"
 
 if [[ "${WITH_UNITTEST}" -eq 1 ]]; then
-    echo "==> [extra] unittest"
-    if [[ ! -d "${ROOT}/kt_components" && ! -d "${ROOT}/unit_test" ]]; then
-        echo "WARN: unittest scaffolding (kt_components/unit_test) not present — skip"
-    else
-        bash "${ROOT}/scripts/unittest/setup.sh" || true
-        bash "${ROOT}/scripts/unittest/runner.sh"
+    echo "==> [extra] unittest (IKEA cmocka + gcovr)"
+    if [[ ! -d "${ROOT}/kt_components" ]]; then
+        echo "ERROR: kt_components/ missing" >&2
+        exit 1
     fi
+    bash "${ROOT}/scripts/unittest/setup.sh"
+    bash "${ROOT}/scripts/unittest/runner.sh"
+    bash "${ROOT}/scripts/unittest/codecoverage.sh" -w || true
 fi
 
 if [[ "${WITH_BUILD}" -eq 1 ]]; then

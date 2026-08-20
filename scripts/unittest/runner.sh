@@ -45,7 +45,13 @@ done
 
 pushd "${SCRIPT_PATH}"
 
-cd ${SCRIPT_PATH}
+cd "${SCRIPT_PATH}"
+
+test_cmake_count="$(find "${SCRIPT_PATH}/../../kt_components" -path '*/test/CMakeLists.txt' 2>/dev/null | wc -l | tr -d ' ')"
+if [[ "${test_cmake_count}" == "0" ]]; then
+  echo "ERROR: no kt_components host tests (expected */test/CMakeLists.txt)" >&2
+  exit 1
+fi
 
 if [ -d "${SCRIPT_PATH}/build" ]; then
     if [ "${NO_CLEAR}" == 0 ]; then
@@ -53,12 +59,12 @@ if [ -d "${SCRIPT_PATH}/build" ]; then
     fi
 fi
 
-cmake -DCMAKE_INSTALL_PREFIX=${HOME}/opt \
-            -DCMAKE_BUILD_TYPE=Debug \
-            -DROOT_DIR="${SCRIPT_PATH}/../.." \
-            -DRUN_SDK_TESTS="${RUN_SDK_TESTS}" \
-            -DDEVICE_FAMILY="ZINGO" \
-            -DFILTER:STRING=$FILTER -B build
+cmake -DCMAKE_INSTALL_PREFIX="${HOME}/opt" \
+      -DCMAKE_BUILD_TYPE=Debug \
+      -DROOT_DIR="${SCRIPT_PATH}/../.." \
+      -DRUN_SDK_TESTS="${RUN_SDK_TESTS}" \
+      -DFILTER="${FILTER:-}" \
+      -B build
 
 make -C build
 make CTEST_OUTPUT_ON_FAILURE=TRUE test -C build

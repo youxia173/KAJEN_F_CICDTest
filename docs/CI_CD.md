@@ -18,6 +18,7 @@ This repository follows Inter IKEA Homesmart DevOps expectations:
 | Cloud firmware compile in CI | **Done** (`ENABLE_FIRMWARE_BUILD=true`) |
 | Sequential release pipeline | **Done** (CodeAnalysis → UnitTest → Build → Release) |
 | Tag → unsigned zip + GitHub Release | **Done** (`{project_id}-{version}-unsigned.zip`) |
+| Host unit tests (cmocka + gcovr) | **Started** (`kt_components/kajen_level_util`) |
 | Push/PR auto CI | **On** (public test repo; push to main) |
 | Homesmart OTA API | **Pending** IKEA credentials / API |
 | Mirror to Inter IKEA GitHub | **Pending** delivery |
@@ -36,7 +37,7 @@ Implementation: `.github/workflows/release_template.yaml` (reused by Release + m
 | Stage | Script / action |
 |---|---|
 | 1 Code analysis | `scripts/linter/*`, `scripts/cppcheck/*` → `code_quality_report.tar.gz` |
-| 2 Unit test | `scripts/unittest/runner.sh` (skipped if no test dirs) |
+| 2 Unit test | `kt_components/*/test` + cmocka + gcovr → `unit_test_report.tar.gz` |
 | 3 Build | GHCR `docker run … build` |
 | 4 Release | `scripts/release/package_release.sh` → GitHub Release |
 
@@ -87,7 +88,8 @@ git push origin v0.3.7
 bash scripts/ci_local.sh              # lint + cppcheck
 bash scripts/ci_local.sh --strict
 bash scripts/ci_local.sh --with-build # needs local SiSDK / Studio
-bash scripts/release/package_release.sh 0.3.6 release_out
+bash scripts/ci_local.sh --with-unittest # cmocka tests under kt_components/
+bash scripts/unittest/runner.sh          # unit tests only
 ```
 
 ## Repo variables / secrets

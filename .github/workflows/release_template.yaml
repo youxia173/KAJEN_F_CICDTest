@@ -83,47 +83,28 @@ jobs:
         with:
           ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
 
-      - name: Decide whether to run host unit tests
-        id: decide
-        shell: bash
+      - name: Install deps and run unit tests
         run: |
-          if [ -d "kt_components" ] || [ -d "unit_test" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Install deps
-        if: steps.decide.outputs.run == 'true'
-        run: |
+          set -euo pipefail
           sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/apt-mirrors.txt 2>/dev/null || true
           sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/*.sources 2>/dev/null || true
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake pkg-config libcmocka-dev
-
-      - name: Run unit tests
-        if: steps.decide.outputs.run == 'true'
-        run: |
-          set -euo pipefail
+          bash scripts/unittest/setup.sh
           mkdir -p unit_test_report
           bash scripts/unittest/runner.sh | tee unit_test_report/unit_test_report.txt
-          if [[ -f scripts/unittest/codecoverage.sh ]]; then
-            bash scripts/unittest/codecoverage.sh -w || true
+          bash scripts/unittest/codecoverage.sh -w
+          if [[ -f scripts/unittest/code_coverage/coverage.html ]]; then
+            cp -a scripts/unittest/code_coverage unit_test_report/
           fi
           tar -czf unit_test_report.tar.gz unit_test_report
 
       - name: Upload unit test report
-        if: steps.decide.outputs.run == 'true'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: unit_test_report
           path: unit_test_report.tar.gz
           if-no-files-found: warn
-
-      - name: Skip unit tests (no test tree)
-        if: steps.decide.outputs.run != 'true'
-        run: echo "No kt_components/ or unit_test/ — skipping host unit tests."
 
   firmware-build:
     name: firmware-build
