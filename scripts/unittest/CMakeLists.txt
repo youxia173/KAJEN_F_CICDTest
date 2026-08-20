@@ -1,6 +1,5 @@
-
-project(z_unit_test LANGUAGES C)
 cmake_minimum_required(VERSION 3.10.2)
+project(z_unit_test LANGUAGES C)
 include(FindPkgConfig)
 include(CMakePackageConfigHelpers)
 

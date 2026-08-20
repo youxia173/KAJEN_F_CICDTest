@@ -128,7 +128,7 @@ if [[ "${WITH_UNITTEST}" -eq 1 ]]; then
     fi
     bash "${ROOT}/scripts/unittest/setup.sh"
     bash "${ROOT}/scripts/unittest/runner.sh"
-    bash "${ROOT}/scripts/unittest/codecoverage.sh" -w || true
+    bash "${ROOT}/scripts/unittest/codecoverage.sh" -w
 fi
 
 if [[ "${WITH_BUILD}" -eq 1 ]]; then
