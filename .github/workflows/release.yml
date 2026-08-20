@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (e.g. 0.3.6) without leading v"
+        description: "Release version (e.g. 1.1.0) without leading v"
         required: true
       create_release:
         description: "Create GitHub Release after build (manual test)"

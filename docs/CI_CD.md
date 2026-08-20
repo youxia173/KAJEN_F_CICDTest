@@ -6,7 +6,7 @@ This repository follows Inter IKEA Homesmart DevOps expectations:
 - CI via GitHub Actions (pipeline YAML in repo)
 - Build logic lives in `scripts/` (pipeline steps stay short)
 - Local reproduction of CI: `bash scripts/ci_local.sh`
-- Release tags `vX.Y.Z`; unsigned zip + release notes on GitHub Releases
+- Release tags `vM.m.p` (IKEA semver); unsigned zip + `config.json` on GitHub Releases
 - Secrets (OTA credentials) in GitHub Secrets — never in source
 - Firmware build env: full SiSDK image on GHCR (`kajen-sixg301:sdk-2025.12.1`)
 
@@ -52,18 +52,22 @@ GHCR image lookup order for firmware-build: `GHCR_FIRMWARE_IMAGE` variable → `
 Configured in `scripts/release/project.env`:
 
 ```bash
-IKEA_PROJECT_ID="4476-20480"   # placeholder until IKEA assigns final ID
+IKEA_PROJECT_ID="4476-36900"   # VID-PID decimal (4476=0x117C, 36900=0x9024 KAJEN floor)
+IKEA_PRODUCT_ID="0x9024"       # config.json productId
+IKEA_OTA_MIN_VERSION="0x01010000"
 ```
 
-Output zip: **`4476-20480-0.3.6-unsigned.zip`** (example for tag `v0.3.6`).
+Output zip: **`4476-36900-1.1.0-unsigned.zip`** (example for tag `v1.1.0`).
 
 | File inside zip | Purpose |
 |---|---|
-| `Matter-Bootloader_113W.s37` | Bootloader — flash separately |
-| `ZigbeeMatterLight_113W.s37` | Application — flash separately |
-| `ZigbeeMatterLightSolution_SixG301M113W-full.s37` | Optional combined image (if build produced it) |
+| `bootloader.s37` | Bootloader |
+| `firmware.s37` | Application firmware |
+| `config.json` | OTA metadata (`productId`, `version`, `minVersion`, `maxVersion`) |
 
-OTA artifacts are **not** included yet (tutorial TBD).
+Version encoding: **`0xMMmmPPBB`** — e.g. `0x01010001` = v1.1.0 build 1. Build byte increments on each OTA drop; bump `sl_matter_config.h` before tagging.
+
+`firmware.ota` is **not** included yet (tutorial TBD).
 
 Legacy single-file naming (`silabs_MatterAndZigger_SixG301_V*.s37`) is kept in `scripts/release/package_firmware.sh` for local convenience only.
 
@@ -76,8 +80,8 @@ Legacy single-file naming (`silabs_MatterAndZigger_SixG301_V*.s37`) is kept in `
 
 ```bash
 git checkout main && git pull
-git tag v0.3.7
-git push origin v0.3.7
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 5. Check GitHub Release for `{project_id}-{version}-unsigned.zip`
