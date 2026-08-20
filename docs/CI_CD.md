@@ -55,6 +55,9 @@ Configured in `scripts/release/project.env`:
 IKEA_PROJECT_ID="4476-36900"   # VID-PID decimal (4476=0x117C, 36900=0x9024 KAJEN floor)
 IKEA_PRODUCT_ID="0x9024"       # config.json productId
 IKEA_OTA_MIN_VERSION="0x01010000"
+OTA_VENDOR_ID="0xFFF1"         # Matter .ota VID (test default; match CHIPProjectConfig)
+OTA_PRODUCT_ID="0x8005"        # Matter .ota PID (test default)
+OTA_GBL_CMD="gbl4"             # MG301; use gbl for MG24
 ```
 
 Output zip: **`4476-36900-1.1.0-unsigned.zip`** (example for tag `v1.1.0`).
@@ -63,11 +66,21 @@ Output zip: **`4476-36900-1.1.0-unsigned.zip`** (example for tag `v1.1.0`).
 |---|---|
 | `bootloader.s37` | Bootloader |
 | `firmware.s37` | Application firmware |
+| `firmware.ota` | Matter OTA (`commander gbl4` + `ota create`) |
 | `config.json` | OTA metadata (`productId`, `version`, `minVersion`, `maxVersion`) |
 
 Version encoding: **`0xMMmmPPBB`** — e.g. `0x01010001` = v1.1.0 build 1. Build byte increments on each OTA drop; bump `sl_matter_config.h` before tagging.
 
-`firmware.ota` is **not** included yet (tutorial TBD).
+OTA creation (SiLabs [Matter OTA](https://docs.silabs.com/matter/2.8.1/matter-ota/02-ota-software-update)):
+
+```bash
+commander gbl4 create firmware.gbl --data firmware.s37 --compress lzma
+commander ota create --type matter --input firmware.gbl \
+  --vendorid 0xFFF1 --productid 0x8005 \
+  --swstring "1.1.0" --swversion 0x01010001 --digest sha256 -o firmware.ota
+```
+
+Release packaging runs inside the GHCR firmware image so Commander is available. When firmware VID/PID moves to production (`0x117C` / `0x9024`), update `OTA_VENDOR_ID` / `OTA_PRODUCT_ID` in `project.env` to match.
 
 Legacy single-file naming (`silabs_MatterAndZigger_SixG301_V*.s37`) is kept in `scripts/release/package_firmware.sh` for local convenience only.
 
@@ -134,7 +147,7 @@ docker run --rm --entrypoint /workspace/docker/entrypoint.sh \
 
 - `scripts/linter`, `scripts/cppcheck`, `scripts/codeanalysis`
 - `scripts/unittest`, `scripts/format`
-- `scripts/release/package_release.sh` (Release zip), `scripts/release/package_firmware.sh` (legacy single .s37)
+- `scripts/release/package_release.sh` (Release zip + `firmware.ota`), `scripts/release/create_ota.sh` (gbl4/ota), `scripts/release/package_firmware.sh` (legacy single .s37)
 - `scripts/flash.sh` (device flash; not used in cloud CI)
 
 `scripts/ci_local.sh` is the shared entry for local checks.

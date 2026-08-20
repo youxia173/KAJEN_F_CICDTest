@@ -173,5 +173,4 @@ jobs:
             Matter-Bootloader_113W/artifact/Matter-Bootloader_113W-crc.s37
             ZigbeeMatterLight_113W/artifact/ZigbeeMatterLight_113W.s37
             artifact/ZigbeeMatterLightSolution_SixG301M113W-full.s37
-            artifact/*.gbl
           if-no-files-found: error

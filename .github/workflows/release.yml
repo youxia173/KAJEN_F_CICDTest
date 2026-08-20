@@ -57,6 +57,39 @@ jobs:
           name: firmware-build
           path: .
 
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve and pull firmware Docker image
+        id: pull
+        shell: bash
+        env:
+          GHCR_FIRMWARE_IMAGE: ${{ vars.GHCR_FIRMWARE_IMAGE }}
+        run: |
+          set -euo pipefail
+          owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          candidates=()
+          if [[ -n "${GHCR_FIRMWARE_IMAGE:-}" ]]; then
+            candidates+=("${GHCR_FIRMWARE_IMAGE}")
+          fi
+          candidates+=("ghcr.io/${owner}/kajen-sixg301:sdk-2025.12.1")
+          candidates+=("ghcr.io/barryjim/kajen-sixg301:sdk-2025.12.1")
+
+          for ref in "${candidates[@]}"; do
+            echo "Trying image: ${ref}"
+            if docker pull "${ref}"; then
+              echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+              echo "Pulled: ${ref}"
+              exit 0
+            fi
+          done
+          echo "::error title=GHCR image missing::Need commander image to build firmware.ota"
+          exit 1
+
       - name: Resolve version
         id: ver
         shell: bash
@@ -77,12 +110,19 @@ jobs:
           source scripts/release/project.env
           echo "zip=${IKEA_PROJECT_ID}-${VER}-unsigned.zip" >> "$GITHUB_OUTPUT"
 
-      - name: Package unsigned release zip
+      - name: Package unsigned release zip (with firmware.ota)
         env:
           GITHUB_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          bash scripts/release/package_release.sh "${{ steps.ver.outputs.version }}" release_out
+          # Run in GHCR image so Simplicity Commander (gbl4 / ota create) is available.
+          sudo chown -R 1000:1000 "${{ github.workspace }}"
+          docker run --rm \
+            -e GITHUB_SHA \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            "${{ steps.pull.outputs.ref }}" \
+            bash scripts/release/package_release.sh "${{ steps.ver.outputs.version }}" release_out
           sed -i "s/\${GITHUB_SHA:-local}/${{ github.sha }}/" release_out/RELEASE_NOTES.md
 
       - name: Download quality reports

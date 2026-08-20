@@ -9,8 +9,11 @@
 #   <out>/{IKEA_PROJECT_ID}-{M.m.p}-unsigned.zip
 #     bootloader.s37
 #     firmware.s37
+#     firmware.ota
 #     config.json
 #   <out>/RELEASE_NOTES.md
+#
+# Requires Simplicity Commander on PATH (or COMMANDER=…) for firmware.ota.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -106,6 +109,15 @@ fi
 cp -a "${SRC_BOOT}" "${STAGE}/bootloader.s37"
 cp -a "${SRC_APP}" "${STAGE}/firmware.s37"
 
+bash "${ROOT}/scripts/release/create_ota.sh" \
+    "${SRC_APP}" \
+    "${STAGE}" \
+    "${FW_VERSION_STRING}" \
+    "${VERSION_HEX}"
+
+# Intermediate .gbl stays out of the IKEA submission zip.
+rm -f "${STAGE}/firmware.gbl"
+
 python3 - "${STAGE}/config.json" <<PY
 import json
 import sys
@@ -132,7 +144,8 @@ cat > "${OUT_DIR}/RELEASE_NOTES.md" <<EOF
 
 - Package: ${ZIP_NAME}
 - Project ID: ${IKEA_PROJECT_ID}
-- Matter productId: ${IKEA_PRODUCT_ID}
+- Matter productId (config.json): ${IKEA_PRODUCT_ID}
+- OTA file VID/PID: ${OTA_VENDOR_ID:-0xFFF1} / ${OTA_PRODUCT_ID:-0x8005}
 - OTA version: ${VERSION_HEX} (${TAG_DISPLAY}.${FW_BUILD})
 - OTA window: min ${MIN_VERSION_HEX}, max ${MAX_VERSION_HEX}
 - Commit: \${GITHUB_SHA:-local}
@@ -143,9 +156,8 @@ cat > "${OUT_DIR}/RELEASE_NOTES.md" <<EOF
 |---|---|
 | \`bootloader.s37\` | Bootloader |
 | \`firmware.s37\` | Application firmware |
+| \`firmware.ota\` | Matter OTA image (gbl4 + LZMA) |
 | \`config.json\` | OTA metadata (productId, version, min/max) |
-
-\`firmware.ota\` is not included yet (OTA tutorial TBD).
 
 ## Local flash (repo artifact, not in zip)
 
