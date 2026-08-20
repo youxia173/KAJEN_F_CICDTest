@@ -40,12 +40,12 @@
 // <o CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION> Device software version
 // <i> Default: 1
 // <i> Must be incremented for each OTA firmware update
-// <i> IKEA encoding 0xMMmmPPBB (Major.Minor.Patch.Build). 0x01010001 = v1.1.0 build 1.
-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 0x01010001
+// <i> IKEA encoding 0xMMmmPPBB (Major.Minor.Patch.Build). 0x01010101 = v1.1.1 build 1.
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 0x01010101
 
 // <s.128 CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING> Device software version string
 // <i> Human-readable software version string (Major.Minor.Patch, no build suffix)
-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "1.1.0"
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "1.1.1"
 
 // <o CHIP_DEVICE_CONFIG_DEFAULT_DEVICE_HARDWARE_VERSION> Device hardware version
 // <i> Default: 1
