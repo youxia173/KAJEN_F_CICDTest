@@ -83,6 +83,7 @@ RUN set -eux \
         python3 \
         python3-pip \
         unzip \
+        zip \
         xz-utils \
     && rm -rf /var/lib/apt/lists/*
 

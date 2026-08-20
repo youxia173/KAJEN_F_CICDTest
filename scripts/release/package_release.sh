@@ -134,10 +134,18 @@ with open(sys.argv[1], "w", encoding="utf-8") as fh:
 PY
 
 rm -f "${OUT_DIR}/${ZIP_NAME}"
-(
-    cd "${STAGE}"
-    zip -r "${OUT_DIR}/${ZIP_NAME}" .
-)
+python3 - "${STAGE}" "${OUT_DIR}/${ZIP_NAME}" <<'PY'
+import sys
+import zipfile
+from pathlib import Path
+
+stage = Path(sys.argv[1])
+zip_path = Path(sys.argv[2])
+with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+    for path in sorted(stage.iterdir()):
+        if path.is_file():
+            zf.write(path, arcname=path.name)
+PY
 
 cat > "${OUT_DIR}/RELEASE_NOTES.md" <<EOF
 # KAJEN_F / SixG301 release ${TAG_DISPLAY} (build ${FW_BUILD})
@@ -171,6 +179,14 @@ rm -rf "${STAGE}"
 echo "Packaged release zip:"
 echo "  ${OUT_DIR}/${ZIP_NAME}"
 echo "config.json:"
-unzip -p "${OUT_DIR}/${ZIP_NAME}" config.json | python3 -m json.tool
-echo "Contents:"
-unzip -l "${OUT_DIR}/${ZIP_NAME}"
+python3 - "${OUT_DIR}/${ZIP_NAME}" <<'PY'
+import json
+import sys
+import zipfile
+
+with zipfile.ZipFile(sys.argv[1]) as zf:
+    print(json.dumps(json.loads(zf.read("config.json")), indent=4))
+    print("Contents:")
+    for info in zf.infolist():
+        print(f"  {info.file_size:>10}  {info.filename}")
+PY
